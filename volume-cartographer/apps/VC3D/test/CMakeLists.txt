@@ -660,3 +660,20 @@ add_test(NAME spiral_brush_patch COMMAND test_spiral_brush_patch)
 vc_register_test_target(test_spiral_brush_patch)
 vc_register_ctest(spiral_brush_patch test_spiral_brush_patch)
 set_tests_properties(spiral_brush_patch PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(test_ink_labels
+    test_ink_labels.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelRaster.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelRaster.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.hpp)
+set_target_properties(test_ink_labels PROPERTIES AUTOMOC ON AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_ink_labels PRIVATE ${PROJECT_SOURCE_DIR}/apps/VC3D)
+target_compile_definitions(test_ink_labels PRIVATE VC_TESTING)
+target_link_libraries(test_ink_labels PRIVATE
+    vc_core opencv_core opencv_imgproc opencv_imgcodecs TIFF::TIFF
+    Qt6::Core Qt6::Concurrent Qt6::Test)
+add_test(NAME ink_labels COMMAND test_ink_labels)
+vc_register_test_target(test_ink_labels)
+vc_register_ctest(ink_labels test_ink_labels)
+set_tests_properties(ink_labels PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
