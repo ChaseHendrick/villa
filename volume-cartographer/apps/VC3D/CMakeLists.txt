@@ -125,6 +125,8 @@ set(srcs
     elements/DownloadQueueDebugOverlay.hpp
     elements/ViewerSplitGrid.cpp
     elements/ViewerSplitGrid.hpp
+    SettingsFilter.cpp
+    SettingsFilter.hpp
     SettingsDialog.cpp
     SurfaceTreeWidget.hpp
     SurfaceTreeWidget.cpp
