@@ -3,6 +3,7 @@
 #include "Keybinds.hpp"
 #include "SpiralBrushCursorWidget.hpp"
 #include "ink_labels/InkLabelAssist.hpp"
+#include "ink_labels/InkLabelImport.hpp"
 #include "ink_labels/InkLabelController.hpp"
 #include "ink_labels/InkLabelRaster.hpp"
 #include "ink_labels/InkLabelStore.hpp"
@@ -10,6 +11,7 @@
 #include "viewer_controls/panels/InkLabelPanel.hpp"
 #include "elements/CollapsibleSettingsGroup.hpp"
 
+#include "vc/core/types/VcDataset.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/RenderCanvas.hpp"
 #include "vc/core/util/Tiff.hpp"
@@ -17,6 +19,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QKeyEvent>
 #include <QLabel>
@@ -260,6 +263,13 @@ private slots:
     void escapeDropsRunningAssist();
     void cursorRingDefaultUnchanged();
     void fillToolAndAssistKeys();
+    void importPngAndRgbTiff();
+    void importLabelZarr65();
+    void importZarr2DVersion3();
+    void importResamplesHalfAndQuarter();
+    void importLegacyPngPair();
+    void numberedVersionsWriteAllKinds();
+    void datasetEntryTargetsTheSegment();
 };
 
 void TestInkLabels::paintOpTable()
@@ -2121,6 +2131,349 @@ void TestInkLabels::fillToolAndAssistKeys()
     QCOMPARE(int(l.labels->history()->undoDepth()), 2);
     // The accepted component (the opened region) is ink now.
     QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, area);
+}
+
+// ---------------------------------------------------------------------------
+// Imports, versions and the trainer handoff
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Imports into a fresh raster of the canvas and returns the outcome.
+ImportOutcome importInto(TileRaster& raster, const fs::path& path, const vc::RenderCanvas& canvas, const ImportOptions& options)
+{
+    EditTxn txn(raster, "import", Actor::User);
+    ImportOutcome out = importLabel(path, canvas, options, txn);
+    if (out.ok)
+        (void)txn.commit(1);
+    return out;
+}
+
+uint64_t countBit(const TileRaster& raster, uint8_t bit)
+{
+    const cv::Mat_<uint8_t> v = fullImage(raster);
+    uint64_t n = 0;
+    for (int y = 0; y < v.rows; ++y)
+        for (int x = 0; x < v.cols; ++x)
+            n += (v(y, x) & bit) != 0;
+    return n;
+}
+
+}  // namespace
+
+void TestInkLabels::importPngAndRgbTiff()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({200, 140});
+    // An anti-aliased PNG: every pixel above 0 counts, with a warning.
+    cv::Mat_<uint8_t> aa = cv::Mat_<uint8_t>::zeros(140, 200);
+    cv::circle(aa, {100, 70}, 30, cv::Scalar(255), cv::FILLED, cv::LINE_AA);
+    const fs::path png = toPath(dir) / "w045_inklabels.png";
+    QVERIFY(cv::imwrite(png.string(), aa));
+    QCOMPARE(detectFormat(png), ImportFormat::Png);
+    TileRaster raster(canvas.size);
+    ImportOutcome out = importInto(raster, png, canvas, {});
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.setPixels, uint64_t(cv::countNonZero(aa)));
+    QCOMPARE(countBit(raster, kInk), out.setPixels);
+    QVERIFY(out.nonBinary > 0);
+    QVERIFY(out.warnings.join('\n').contains(QStringLiteral("other than 0")));
+
+    // An RGB TIFF named as a supervision mask: the first sample (red) is used.
+    cv::Mat bgr(140, 200, CV_8UC3, cv::Scalar(0, 0, 0));
+    bgr(cv::Rect(10, 10, 50, 40)).setTo(cv::Scalar(0, 0, 255));  // red square
+    bgr(cv::Rect(100, 80, 30, 30)).setTo(cv::Scalar(255, 0, 0)); // blue square, ignored
+    const fs::path tif = toPath(dir) / "w045_supervision_mask.tif";
+    QVERIFY(cv::imwrite(tif.string(), bgr));
+    QCOMPARE(kindForFileName(tif), LabelKind::Supervision);
+    ImportOptions options;
+    options.kind = kindForFileName(tif);
+    out = importInto(raster, tif, canvas, options);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.setPixels, uint64_t(50 * 40));
+    QCOMPARE(countBit(raster, kSupervision), uint64_t(50 * 40));
+    QCOMPARE(countBit(raster, kInk), uint64_t(cv::countNonZero(aa)));  // other bits untouched
+    QVERIFY(out.warnings.join('\n').contains(QStringLiteral("more than one sample")));
+
+    // Through the controller: one undo entry, provenance recorded.
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "w045").ok);
+    int finished = 0;
+    ImportOutcome last;
+    QObject::connect(l.labels.get(), &InkLabelController::importFinished, l.labels.get(),
+                     [&](const QString&, const ImportOutcome& outcome, const ImportOptions&) {
+                         ++finished;
+                         last = outcome;
+                     });
+    QVERIFY(l.labels->importFile(png, {}));
+    QTRY_COMPARE(finished, 1);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, uint64_t(cv::countNonZero(aa)));
+    QVERIFY(l.labels->undo(Actor::User));
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, uint64_t(0));
+    QVERIFY(l.labels->redo(Actor::User));
+    QVERIFY(l.labels->save().result().ok);
+    QString error;
+    const auto sidecar = readSidecar(l.labels->session()->paths.sidecar(), &error);
+    QVERIFY(sidecar);
+    QCOMPARE(sidecar->provenance.first().toObject().value("kind").toString(), QStringLiteral("import"));
+    QCOMPARE(sidecar->provenance.first().toObject().value("format").toString(), QStringLiteral("png"));
+    // A wrong-size file is refused through the controller too, with nothing applied.
+    const fs::path small = toPath(dir) / "small_inklabels.png";
+    QVERIFY(cv::imwrite(small.string(), cv::Mat_<uint8_t>::zeros(17, 23)));
+    QVERIFY(l.labels->importFile(small, {}));
+    QTRY_COMPARE(finished, 2);
+    QVERIFY(!last.ok);
+    QVERIFY(last.error.contains(QStringLiteral("23 x 17")));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+}
+
+void TestInkLabels::importLabelZarr65()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({300, 200});
+    const fs::path root = toPath(dir) / "w045_supervision_mask.zarr";
+    fs::create_directories(root);
+    auto ds = vc::createZarrDataset(root, "0", {65, 200, 300}, {65, 64, 64}, vc::VcDtype::uint8, "blosc", "/");
+    cv::Mat_<uint8_t> plane = cv::Mat_<uint8_t>::zeros(200, 300);
+    plane(cv::Rect(40, 30, 100, 50)) = 255;
+    QVERIFY(ds->writeRegion({32, 0, 0}, {1, 200, 300}, plane.data));
+    // Other planes are ignored.
+    cv::Mat_<uint8_t> other(200, 300, uint8_t(255));
+    QVERIFY(ds->writeRegion({0, 0, 0}, {1, 200, 300}, other.data));
+    ds.reset();
+    QCOMPARE(detectFormat(root), ImportFormat::LabelZarr65);
+    TileRaster raster(canvas.size);
+    ImportOptions options;
+    options.kind = kindForFileName(root);
+    QCOMPARE(options.kind, LabelKind::Supervision);
+    const ImportOutcome out = importInto(raster, root, canvas, options);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.format, ImportFormat::LabelZarr65);
+    QCOMPARE(countBit(raster, kSupervision), uint64_t(100 * 50));
+    QCOMPARE(countBit(raster, kInk), uint64_t(0));
+    // The level directory works as well as the root.
+    TileRaster again(canvas.size);
+    QVERIFY(importInto(again, root / "0", canvas, options).ok);
+    QVERIFY(sameImage(fullImage(again), fullImage(raster)));
+}
+
+void TestInkLabels::importZarr2DVersion3()
+{
+    // A 2D zarr v3 array at <x>.zarr/0 with the plain bytes codec, written by
+    // hand: 150 x 100 px in 64 x 64 chunks.
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({100, 150});
+    QCOMPARE(canvas.size, cv::Size(100, 140));
+    const cv::Size size = canvas.size;
+    const fs::path array = toPath(dir) / "w045_inklabels.zarr" / "0";
+    fs::create_directories(array);
+    {
+        std::ofstream meta(array / "zarr.json");
+        meta << R"({"zarr_format": 3, "node_type": "array", "shape": [)" << size.height << ", " << size.width
+             << R"(], "data_type": "uint8", "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [64, 64]}},)"
+             << R"( "chunk_key_encoding": {"name": "default", "configuration": {"separator": "/"}}, "fill_value": 0,)"
+             << R"( "codecs": [{"name": "bytes", "configuration": {"endian": "little"}}]})";
+    }
+    cv::Mat_<uint8_t> image = cv::Mat_<uint8_t>::zeros(size);
+    image(cv::Rect(20, 30, 70, 90)) = 255;
+    for (int cy = 0; cy * 64 < size.height; ++cy)
+        for (int cx = 0; cx * 64 < size.width; ++cx) {
+            cv::Mat_<uint8_t> chunk = cv::Mat_<uint8_t>::zeros(64, 64);
+            const cv::Rect r = cv::Rect(cx * 64, cy * 64, 64, 64) & cv::Rect(cv::Point(0, 0), size);
+            image(r).copyTo(chunk(cv::Rect(0, 0, r.width, r.height)));
+            const fs::path file = array / "c" / std::to_string(cy) / std::to_string(cx);
+            fs::create_directories(file.parent_path());
+            std::ofstream out(file, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(chunk.data), 64 * 64);
+        }
+    // The root is a v3 group, as in an OME-Zarr pyramid.
+    {
+        std::ofstream group(array.parent_path() / "zarr.json");
+        group << R"({"zarr_format": 3, "node_type": "group", "attributes": {}})";
+    }
+    QCOMPARE(detectFormat(array.parent_path()), ImportFormat::Zarr2D);
+    QCOMPARE(detectFormat(array), ImportFormat::Zarr2D);
+    TileRaster raster(size);
+    const ImportOutcome out = importInto(raster, array.parent_path(), canvas, {});
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.format, ImportFormat::Zarr2D);
+    QCOMPARE(countBit(raster, kInk), uint64_t(70 * 90));
+    const cv::Mat_<uint8_t> v = fullImage(raster);
+    for (int y = 0; y < size.height; ++y)
+        for (int x = 0; x < size.width; ++x)
+            QCOMPARE((v(y, x) & kInk) != 0, image(y, x) != 0);
+}
+
+void TestInkLabels::importResamplesHalfAndQuarter()
+{
+    QTemporaryDir dir;
+    // A grid of 3041 x 9 at scale 1: W = 3041, the half render is 1521 wide
+    // (3041 / 2 rounds up), the quarter 760.
+    const auto canvas = vc::RenderCanvas::make({3041, 9}, {1.f, 1.f}, 1.0);
+    QCOMPARE(canvas.size, cv::Size(3041, 9));
+    for (const double rs : {0.5, 0.25}) {
+        const cv::Size source = vc::renderCanvasSize(canvas.grid, canvas.gridScale, rs);
+        QCOMPARE(source.width, rs == 0.5 ? 1521 : 760);
+        cv::Mat_<uint8_t> image(source);
+        for (int y = 0; y < source.height; ++y)
+            for (int x = 0; x < source.width; ++x)
+                image(y, x) = ((x * 7 + y * 3) % 5 == 0) ? 255 : 0;
+        const fs::path tif = toPath(dir) / ("half_inklabels_" + std::to_string(int(rs * 100)) + ".tif");
+        QVERIFY(cv::imwrite(tif.string(), image));
+
+        TileRaster raster(canvas.size);
+        ImportOutcome out = importInto(raster, tif, canvas, {});
+        QVERIFY(!out.ok);
+        QVERIFY(out.needsDecision);
+        QCOMPARE(out.resampledFrom, rs);
+        QCOMPARE(countBit(raster, kInk), uint64_t(0));
+
+        ImportOptions options;
+        options.allowResample = true;
+        out = importInto(raster, tif, canvas, options);
+        QVERIFY2(out.ok, qPrintable(out.error));
+        QCOMPARE(out.resampledFrom, rs);
+        const cv::Mat_<uint8_t> v = fullImage(raster);
+        for (int y = 0; y < canvas.size.height; ++y)
+            for (int x = 0; x < canvas.size.width; ++x) {
+                const int sx = std::clamp(int(std::floor(source.width / 2.0 + rs * (x + 0.5 - canvas.size.width / 2.0))), 0, source.width - 1);
+                const int sy = std::clamp(int(std::floor(source.height / 2.0 + rs * (y + 0.5 - canvas.size.height / 2.0))), 0, source.height - 1);
+                if (((v(y, x) & kInk) != 0) != (image(sy, sx) != 0))
+                    QFAIL(qPrintable(QStringLiteral("rs %1 pixel (%2, %3)").arg(rs).arg(x).arg(y)));
+            }
+    }
+    // A rotated render and an unrelated size are refused, saying why.
+    TileRaster raster(canvas.size);
+    const fs::path rotated = toPath(dir) / "rot_inklabels.tif";
+    QVERIFY(cv::imwrite(rotated.string(), cv::Mat_<uint8_t>::zeros(3041, 9)));
+    ImportOutcome out = importInto(raster, rotated, canvas, {});
+    QVERIFY(!out.ok && !out.needsDecision);
+    QVERIFY(out.error.contains(QStringLiteral("rotated render")));
+    const fs::path odd = toPath(dir) / "odd_inklabels.tif";
+    QVERIFY(cv::imwrite(odd.string(), cv::Mat_<uint8_t>::zeros(10, 3000)));
+    out = importInto(raster, odd, canvas, {});
+    QVERIFY(!out.ok && !out.needsDecision);
+    QVERIFY(out.error.contains(QStringLiteral("tifxyz_label_transfer")));
+}
+
+void TestInkLabels::importLegacyPngPair()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({200, 140});
+    cv::Mat_<uint8_t> ink = cv::Mat_<uint8_t>::zeros(140, 200);
+    ink(cv::Rect(50, 50, 20, 20)) = 255;
+    cv::Mat_<uint8_t> mask = cv::Mat_<uint8_t>::zeros(140, 200);
+    mask(cv::Rect(10, 10, 180, 120)) = 255;
+    QVERIFY(cv::imwrite((toPath(dir) / "w045_inklabels.png").string(), ink));
+    QVERIFY(cv::imwrite((toPath(dir) / "w045_mask.png").string(), mask));
+    const fs::path path = toPath(dir) / "w045_inklabels.png";
+    QCOMPARE(detectFormat(path), ImportFormat::LegacyPngPair);
+
+    TileRaster raster(canvas.size);
+    ImportOutcome out = importInto(raster, path, canvas, {});
+    QVERIFY(!out.ok && out.needsDecision);
+    QVERIFY(out.error.contains(QStringLiteral("w045_mask.png")));
+    ImportOptions options;
+    options.legacyMaskAs = LegacyMaskAs::Supervision;
+    out = importInto(raster, path, canvas, options);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(countBit(raster, kInk), uint64_t(400));
+    QCOMPARE(countBit(raster, kSupervision), uint64_t(180 * 120));
+
+    TileRaster inkOnly(canvas.size);
+    options.legacyMaskAs = LegacyMaskAs::Ignore;
+    QVERIFY(importInto(inkOnly, path, canvas, options).ok);
+    QCOMPARE(countBit(inkOnly, kInk), uint64_t(400));
+    QCOMPARE(countBit(inkOnly, kSupervision), uint64_t(0));
+}
+
+void TestInkLabels::numberedVersionsWriteAllKinds()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({400, 300});
+    StorePaths paths;
+    {
+        Labeler l;
+        QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+        paths = l.labels->session()->paths;
+        QCOMPARE(paths.version, 1);
+        QVERIFY(l.labels->applyShape(disc(100, 100, 30), Actor::User) > 0);
+        QVERIFY(l.labels->save().result().ok);
+        QTRY_VERIFY(!l.labels->session()->dirty);
+        QVERIFY(!fs::exists(paths.file(LabelKind::Validation)));
+
+        QVERIFY(l.labels->applyShape(disc(300, 200, 30), Actor::User) > 0);
+        const SaveOutcome v2 = l.labels->saveAsNewVersion().result();
+        QVERIFY2(v2.ok, qPrintable(v2.error));
+        QTRY_COMPARE(l.labels->session()->paths.version, 2);
+        QTRY_VERIFY(!l.labels->session()->dirty);
+        StorePaths p2 = paths;
+        p2.version = 2;
+        for (const LabelKind kind : kAllKinds)
+            QVERIFY2(fs::exists(p2.file(kind)), p2.file(kind).string().c_str());
+        QCOMPARE(p2.file(LabelKind::Validation).filename().string(), std::string("seg_validation_mask_v2.tif"));
+        QCOMPARE(cv::countNonZero(readGray(p2.file(LabelKind::Validation))), 0);
+        QVERIFY(fs::exists(p2.sidecar()));
+        QCOMPARE(listVersions(paths.dir, "seg"), (std::vector<int>{1, 2}));
+        QCOMPARE(l.labels->versions(), (std::vector<int>{1, 2}));
+        // v1 still holds the first state.
+        QCOMPARE(cv::countNonZero(readGray(paths.file(LabelKind::Ink))) < cv::countNonZero(readGray(p2.file(LabelKind::Ink))), true);
+        l.labels->closeSession();
+        settleWrites(*l.labels, paths);
+    }
+    Labeler l;
+    // The newest version opens by default; others on request.
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    QCOMPARE(l.labels->session()->paths.version, 2);
+    const auto twoDiscs = LabelCounts::from(l.labels->session()->counts).ink;
+    InkLabelController::OpenOptions one;
+    one.version = 1;
+    l.labels->closeSession();
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg", one).ok);
+    QCOMPARE(l.labels->session()->paths.version, 1);
+    QVERIFY(LabelCounts::from(l.labels->session()->counts).ink < twoDiscs);
+    InkLabelController::OpenOptions missing;
+    missing.version = 5;
+    l.labels->closeSession();
+    const auto refused = l.labels->openForTesting(canvas, toPath(dir), "seg", missing);
+    QVERIFY(!refused.ok);
+    QCOMPARE(refused.error, InkLabelController::OpenError::NoVersion);
+    QVERIFY(refused.message.contains(QStringLiteral("1, 2")));
+}
+
+void TestInkLabels::datasetEntryTargetsTheSegment()
+{
+    const StorePaths paths = storePathsFor("/data/proj", "w045");
+    QJsonObject entry = datasetEntry(paths, "/data/proj", {1});
+    QCOMPARE(entry.value("segments_path").toString(), QStringLiteral("/data/proj/ink_labels"));
+    QCOMPARE(entry.value("segment_names").toArray(), QJsonArray{QStringLiteral("w045")});
+    QCOMPARE(entry.value("surface_volume_paths").toObject().value("w045").toString(),
+             QStringLiteral("/data/proj/ink_labels/w045/w045.zarr"));
+    QVERIFY(!entry.contains("label_version"));  // one version: the trainer's default
+    // With several versions, the saved one is named, also v1 (unnumbered),
+    // since the trainer otherwise takes the newest.
+    QCOMPARE(datasetEntry(paths, "/data/proj", {1, 2}).value("label_version").toString(), QStringLiteral("v1"));
+    StorePaths v3 = paths;
+    v3.version = 3;
+    QCOMPARE(datasetEntry(v3, "/data/proj", {1, 3}).value("label_version").toString(), QStringLiteral("v3"));
+    // Built as JSON, so quotes and backslashes in paths stay valid.
+    const StorePaths odd = storePathsFor("C:\\data\\my \"proj\"", "w045");
+    const QByteArray text = QJsonDocument(datasetEntry(odd, "C:\\data\\my \"proj\"", {1})).toJson();
+    QJsonParseError error;
+    QVERIFY(QJsonDocument::fromJson(text, &error).isObject());
+    QCOMPARE(error.error, QJsonParseError::NoError);
+
+    // Version names: _v1, _v0, junk and numbers too large for an int are
+    // skipped instead of crashing the open.
+    QTemporaryDir dir;
+    const fs::path store = toPath(dir) / "ink_labels" / "seg";
+    fs::create_directories(store);
+    for (const char* name : {"seg_inklabels.tif", "seg_inklabels_v2.tif", "seg_supervision_mask_v7.tif",
+                             "seg_inklabels_v1.tif", "seg_inklabels_v0.tif", "seg_inklabels_v99999999999.tif",
+                             "seg_inklabels_vx.tif", "seg_inklabels_v3.tif.prev"})
+        std::ofstream(store / name) << "x";
+    QCOMPARE(listVersions(store, "seg"), (std::vector<int>{1, 2, 7}));
 }
 
 QTEST_MAIN(TestInkLabels)

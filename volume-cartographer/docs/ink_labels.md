@@ -145,6 +145,70 @@ and a SHA-256 of each file.
   that keeps the grid only warns: labels stay on the same grid positions.
 * **Closing VC3D** with unsaved labels asks to save, discard or cancel.
 
+## Importing labels
+
+**Import...** reads an existing label image into one label bit, chosen by
+its file name (`*_supervision_mask*` and `*_validation_mask*`, otherwise
+ink): pixels above 0 get the bit and pixels at 0 lose it, as the trainer
+reads them. It accepts:
+
+* TIFF (read block by block, so large files are fine) and PNG (up to 1 GiB);
+  extra channels are ignored, as `create_label_zarrs` ignores them;
+* a label zarr written by `create_label_zarrs` (plane 32 of `<x>.zarr/0`),
+  or a 2D uint8 or uint16 zarr (v2 or v3) at `<x>.zarr/0`;
+* a legacy `<seg>_inklabels.png` with `<seg>_mask.png` beside it, where
+  VC3D asks whether the mask (the valid surface) becomes the supervision mask.
+
+The image must have the canvas size. A render at scale 0.5 or 0.25 is
+offered nearest-neighbor resampling; a rotated or unrelated size is refused
+with both sizes. Imports are one undo step and are recorded in the sidecar's
+`provenance`.
+
+## Versions and training
+
+The trainer picks the newest `_vN` of each label file. **Save as new
+version** writes all three files as the next version (an all-zero
+validation mask when none is painted), so the newest ink, supervision and
+validation always belong together; the dock then edits that version. The
+version list opens any other version, and the newest opens by default. When
+labels are locked to an old canvas, **Start empty labels in a new version**
+labels the current canvas without touching them.
+
+**Copy dataset entry** (in the folded **Versions and import** group, with the
+version list and **Import...**) puts the trainer's dataset entry for these
+labels on the clipboard as JSON:
+
+```json
+{
+    "label_version": "v2",
+    "segment_names": ["w045"],
+    "segments_path": "/data/proj/ink_labels",
+    "surface_volume_paths": {"w045": "/data/proj/ink_labels/w045/w045.zarr"}
+}
+```
+
+`label_version` appears only when the store has more than one version, so
+the trainer reads the version you saved instead of the newest. Add
+`volume_scale` as in your config. Setting `surface_volume_paths` means
+`x.tif` is not needed in non-native modes; native 3D modes need `x.tif` in
+the segment folder, which the label folder does not have.
+
+To turn saved labels into trainer input (POSIX shell; adjust paths and
+quoting on Windows):
+
+```sh
+# 1. label zarrs for this segment only
+cd villa/vesuvius && uv run --extra models python -m vesuvius.ink_detection.preprocessing.create_label_zarrs \
+    "<store>/<seg>" --workers 4 --overwrite
+# 2. the surface volume next to the labels (time a crop first)
+vc_render_tifxyz -v <volume> -s "<segment folder>" --scale 1 -g 0 -n 65 --zarr-output "<store>/<seg>/<seg>.zarr"
+# 3. validation, on a <root>/<scroll>/<segment> layout
+mkdir -p /tmp/vc3d-labels/<scroll> && ln -sfn "<store>/<seg>" /tmp/vc3d-labels/<scroll>/<seg>
+uv run --extra models python -m vesuvius.ink_detection.preprocessing.validate_segments /tmp/vc3d-labels
+```
+
+Here `<store>/<seg>` is the label folder the dock shows.
+
 ## Pixel mapping
 
 Label pixel `(c, r)` covers `[c, c+1) x [r, r+1)` of the canvas of size

@@ -5,9 +5,15 @@
 #include "overlays/InkLabelOverlayController.hpp"
 #include "ink_labels/InkLabelController.hpp"
 
+#include <QApplication>
 #include <QButtonGroup>
+#include <QClipboard>
+#include <QFileDialog>
+#include <QMenu>
+#include <QMessageBox>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFileInfo>
 #include <QFontMetrics>
 #include <QGridLayout>
 #include <QLabel>
@@ -134,6 +140,11 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     _bannerLabel->setForegroundRole(QPalette::ToolTipText);
     _bannerLabel->hide();
     layout->addWidget(_bannerLabel);
+    _newVersionButton = makeButton(tr("Start empty labels in a new version"), this, false);
+    _newVersionButton->setObjectName(QStringLiteral("inkLabelNewVersion"));
+    _newVersionButton->setToolTip(tr("Keep the locked labels as they are and label this canvas as the next version."));
+    _newVersionButton->hide();
+    layout->addWidget(_newVersionButton);
 
     auto* classRow = new LabeledControlRow(tr("Class"), this);
     _inkButton = makeButton(tr("Ink (W)"), classRow, true);
@@ -235,6 +246,44 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     fileRow->addControl(_saveButton);
     fileRow->addStretch(1);
     layout->addWidget(fileRow);
+
+    // Versions, imports and the trainer handoff, folded until needed (added
+    // below the Assist group).
+    _filesGroup = new CollapsibleSettingsGroup(tr("Versions and import"), this);
+    _filesGroup->setObjectName(QStringLiteral("inkLabelFilesGroup"));
+    _filesGroup->setExpanded(false);
+    auto* files = _filesGroup->contentLayout();
+    files->setSpacing(6);
+    auto* versionRow = new LabeledControlRow(tr("Version"), this);
+    _versionCombo = new QComboBox(versionRow);
+    _versionCombo->setObjectName(QStringLiteral("inkLabelVersion"));
+    _versionCombo->setFocusPolicy(Qt::NoFocus);
+    _versionCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    _versionCombo->setToolTip(tr("Label version: v1 is the unnumbered <segment>_inklabels.tif, v2 is "
+                                 "<segment>_inklabels_v2.tif and so on. Save rewrites the open version."));
+    _saveVersionButton = makeButton(tr("Save as new version"), versionRow, false);
+    _saveVersionButton->setToolTip(tr("Write all three label files as the next version (_v2, _v3, ...)."));
+    versionRow->addControl(_versionCombo);
+    versionRow->addControl(_saveVersionButton);
+    versionRow->addStretch(1);
+    files->addWidget(versionRow);
+
+    auto* handoffRow = new LabeledControlRow(QString(), this);
+    _importButton = makeButton(tr("Import..."), handoffRow, false);
+    _importButton->setObjectName(QStringLiteral("inkLabelImport"));
+    _importButton->setToolTip(tr("Read a label TIFF, PNG or label zarr into ink, supervision or validation (by its file name)."));
+    auto* importMenu = new QMenu(_importButton);
+    importMenu->addAction(tr("Label image (TIFF or PNG)..."), this, [this] { chooseImport(false); });
+    importMenu->addAction(tr("Label zarr folder..."), this, [this] { chooseImport(true); });
+    _importButton->setMenu(importMenu);
+    _commandsButton = makeButton(tr("Copy dataset entry"), handoffRow, false);
+    _commandsButton->setObjectName(QStringLiteral("inkLabelDatasetEntry"));
+    _commandsButton->setToolTip(tr("Copy the ink detection trainer's dataset entry (JSON) for these labels. The commands that "
+                                   "make the label zarrs and the surface volume are in docs/ink_labels.md."));
+    handoffRow->addControl(_importButton);
+    handoffRow->addControl(_commandsButton);
+    handoffRow->addStretch(1);
+    files->addWidget(handoffRow);
 
     _countsLabel = new QLabel(this);
     _countsLabel->setObjectName(QStringLiteral("inkLabelCounts"));
@@ -347,6 +396,7 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
         ++cleanupIndex;
     }
     assist->addWidget(cleanupButtons);
+    outer->addWidget(_filesGroup);
 
     if (!_labels) {
         setEnabled(false);
@@ -376,6 +426,26 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     connect(_undoButton, &QPushButton::clicked, this, [this] { _labels->undo(Actor::User, true); });
     connect(_redoButton, &QPushButton::clicked, this, [this] { _labels->redo(Actor::User); });
     connect(_saveButton, &QPushButton::clicked, this, [this] { _labels->saveInteractive(); });
+    connect(_saveVersionButton, &QPushButton::clicked, this, [this] { _labels->saveAsNewVersion(); });
+    connect(_commandsButton, &QPushButton::clicked, this, [this] {
+        const QString text = _labels->datasetEntryText();
+        if (text.isEmpty())
+            return;
+        QApplication::clipboard()->setText(text);
+        _assistLabel->setText(tr("Dataset entry copied to the clipboard; set volume_scale as in your config."));
+    });
+    connect(_newVersionButton, &QPushButton::clicked, this, [this] {
+        const auto out = _labels->startNewVersion();
+        if (!out.ok && !out.message.isEmpty())
+            _bannerLabel->setText(out.message);
+    });
+    connect(_versionCombo, &QComboBox::activated, this, [this](int index) {
+        const int version = _versionCombo->itemData(index).toInt();
+        const InkLabelController::SessionInfo* session = _labels->session();
+        if (version > 0 && session && version != session->paths.version)
+            _labels->openVersion(version);
+    });
+    connect(_labels, &InkLabelController::importFinished, this, &InkLabelPanel::onImportFinished);
     for (QComboBox* combo : {_guideCombo, _sideCombo, _connectivityCombo, _medianCombo})
         connect(combo, &QComboBox::currentIndexChanged, this, &InkLabelPanel::pushAssist);
     connect(_thresholdSlider, &QSlider::valueChanged, this, &InkLabelPanel::pushAssist);
@@ -428,6 +498,10 @@ void InkLabelPanel::refreshSession()
         _folderLabel->setToolTip(dir);
 
         QStringList parts;
+        // The open version, when there is more than one (the combo box sits
+        // in the folded group).
+        if (!session->locked && (session->paths.version > 1 || _labels->versions().size() > 1))
+            parts << tr("v%1").arg(session->paths.version);
         if (session->locked)
             parts << tr("locked");
         else if (session->readOnly)
@@ -458,6 +532,11 @@ void InkLabelPanel::refreshSession()
                                                       _radiusSlider})
         w->setEnabled(editable || !session);
     _saveButton->setEnabled(editable);
+    _saveVersionButton->setEnabled(editable);
+    _importButton->setEnabled(editable);
+    _commandsButton->setEnabled(session && !session->locked);
+    _newVersionButton->setVisible(session && session->locked);
+    refreshVersions();
     refreshAssist();
     refreshHistory();
     refreshCounts();
@@ -594,4 +673,67 @@ void InkLabelPanel::pushAssist()
     a.minArea = _minAreaSpin->value();
     a.cleanupSize = _cleanupSpin->value();
     _labels->setAssistSettings(a);
+}
+
+void InkLabelPanel::refreshVersions()
+{
+    if (!_labels)
+        return;
+    const QSignalBlocker blocker(_versionCombo);
+    _versionCombo->clear();
+    const InkLabelController::SessionInfo* session = _labels->session();
+    if (!session || session->locked) {
+        _versionCombo->setEnabled(false);
+        return;
+    }
+    for (const int v : _labels->versions())
+        _versionCombo->addItem(tr("v%1").arg(v), v);
+    _versionCombo->setCurrentIndex(_versionCombo->findData(session->paths.version));
+    _versionCombo->setEnabled(_versionCombo->count() > 1);
+}
+
+void InkLabelPanel::chooseImport(bool zarrFolder)
+{
+    if (!_labels || !_labels->session())
+        return;
+    const QString start = QString::fromStdString(_labels->session()->segmentDir.string());
+    const QString path = zarrFolder ? QFileDialog::getExistingDirectory(this, tr("Import label zarr"), start)
+                                    : QFileDialog::getOpenFileName(this, tr("Import label image"), start,
+                                                                   tr("Label images (*.tif *.tiff *.png)"));
+    if (path.isEmpty())
+        return;
+    ImportOptions options;
+    options.kind = kindForFileName(path.toStdString());
+    _labels->importFile(path.toStdString(), options);
+}
+
+void InkLabelPanel::onImportFinished(const QString& path, const ImportOutcome& outcome, const ImportOptions& options)
+{
+    if (!_labels)
+        return;
+    if (outcome.ok) {
+        _assistLabel->setText(tr("Imported %1 px of %2 from %3")
+                                  .arg(QLocale().toString(qulonglong(outcome.setPixels)), QString::fromLatin1(kindName(options.kind)),
+                                       QFileInfo(path).fileName()));
+        return;
+    }
+    if (!outcome.needsDecision) {
+        _assistLabel->setText(outcome.error);
+        return;
+    }
+    // A legacy mask or a lower-resolution render: ask, then import again.
+    ImportOptions next = options;
+    if (outcome.format == ImportFormat::LegacyPngPair && options.legacyMaskAs == LegacyMaskAs::Ask) {
+        const auto answer = QMessageBox::question(this, tr("Legacy label mask"), outcome.error,
+                                                  QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, QMessageBox::Yes);
+        if (answer == QMessageBox::Cancel)
+            return;
+        next.legacyMaskAs = answer == QMessageBox::Yes ? LegacyMaskAs::Supervision : LegacyMaskAs::Ignore;
+    } else {
+        const auto answer = QMessageBox::question(this, tr("Resample label image"), outcome.error, QMessageBox::Yes | QMessageBox::Cancel);
+        if (answer != QMessageBox::Yes)
+            return;
+        next.allowResample = true;
+    }
+    _labels->importFile(path.toStdString(), next);
 }

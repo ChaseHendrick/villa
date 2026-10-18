@@ -217,6 +217,8 @@ set(srcs
     ink_labels/InkLabelAssist.hpp
     ink_labels/InkLabelController.cpp
     ink_labels/InkLabelController.hpp
+    ink_labels/InkLabelImport.cpp
+    ink_labels/InkLabelImport.hpp
     ink_labels/InkLabelRaster.cpp
     ink_labels/InkLabelRaster.hpp
     ink_labels/InkLabelStore.cpp

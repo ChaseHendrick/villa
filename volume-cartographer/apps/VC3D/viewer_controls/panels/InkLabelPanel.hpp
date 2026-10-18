@@ -9,6 +9,11 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QSpinBox;
+
+namespace vc3d::ink_labels {
+struct ImportOutcome;
+struct ImportOptions;
+}
 class QPushButton;
 class QSlider;
 class QTimer;
@@ -32,10 +37,15 @@ private:
     void pushDisplay();
     void refreshAssist();
     void pushAssist();
+    void refreshVersions();
+    void chooseImport(bool zarrFolder);
+    void onImportFinished(const QString& path, const vc3d::ink_labels::ImportOutcome& outcome,
+                          const vc3d::ink_labels::ImportOptions& options);
 
     QPointer<InkLabelController> _labels;
     CollapsibleSettingsGroup* _labelsGroup{nullptr};
     CollapsibleSettingsGroup* _assistGroup{nullptr};
+    CollapsibleSettingsGroup* _filesGroup{nullptr};
     QPushButton* _modeButton{nullptr};
     QLabel* _folderLabel{nullptr};
     QLabel* _statusLabel{nullptr};
@@ -58,6 +68,11 @@ private:
     QPushButton* _undoButton{nullptr};
     QPushButton* _redoButton{nullptr};
     QPushButton* _saveButton{nullptr};
+    QPushButton* _saveVersionButton{nullptr};
+    QPushButton* _importButton{nullptr};
+    QPushButton* _commandsButton{nullptr};
+    QPushButton* _newVersionButton{nullptr};
+    QComboBox* _versionCombo{nullptr};
     QLabel* _countsLabel{nullptr};
     QTimer* _countsTimer{nullptr};
     // Assist section.

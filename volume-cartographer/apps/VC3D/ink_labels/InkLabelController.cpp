@@ -10,6 +10,7 @@
 #include "volume_viewers/CVolumeViewerView.hpp"
 #include "volume_viewers/VolumeViewerBase.hpp"
 
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/QuadSurface.hpp"
 
@@ -19,7 +20,9 @@
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFutureInterface>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QFutureWatcher>
 #include <QGraphicsView>
 #include <QKeyEvent>
@@ -635,7 +638,8 @@ InkLabelController::OpenOutcome InkLabelController::openForActiveSegment(const O
     if (_session) {
         const auto paths = storePathsFor(request->projectDir, request->segment);
         if (_session->info.paths.dir == paths.dir && _session->info.canvas == request->canvas
-            && _session->surfaceRaw == request->surface.lock().get()) {
+            && _session->surfaceRaw == request->surface.lock().get()
+            && (options.version == 0 || options.version == _session->info.paths.version)) {
             outcome.ok = !_session->info.locked;
             outcome.readOnly = _session->info.readOnly;
             outcome.locked = _session->info.locked;
@@ -647,6 +651,31 @@ InkLabelController::OpenOutcome InkLabelController::openForActiveSegment(const O
         }
     }
     return openStore(*request, options);
+}
+
+bool InkLabelController::resolveVersion(StorePaths& paths, const OpenRequest& request, const OpenOptions& options,
+                                        OpenOutcome& out) const
+{
+    const std::vector<int> existing = listVersions(paths.dir, paths.prefix);
+    const int newest = existing.empty() ? 1 : existing.back();
+    if (options.version <= 0) {
+        paths.version = newest;
+        return true;
+    }
+    if (options.version == 1 || std::find(existing.begin(), existing.end(), options.version) != existing.end()
+        || (options.createVersion && options.version > newest)) {
+        paths.version = options.version;
+        return true;
+    }
+    QStringList list;
+    for (const int v : existing)
+        list << QString::number(v);
+    out.error = OpenError::NoVersion;
+    out.message = tr("Ink labels for %1 have no version %2 (versions: %3).")
+                      .arg(QString::fromStdString(request.segment))
+                      .arg(options.version)
+                      .arg(existing.empty() ? tr("none") : list.join(QStringLiteral(", ")));
+    return false;
 }
 
 bool InkLabelController::acquireLock(Session& session, const OpenOptions& options, std::shared_ptr<QLockFile> heldLock,
@@ -871,8 +900,10 @@ InkLabelController::OpenOutcome InkLabelController::openStore(const OpenRequest&
         ~PendingReset() { flag = false; }
     } pendingReset{_openPending};
 
-    const StorePaths paths = storePathsFor(request.projectDir, request.segment);
+    StorePaths paths = storePathsFor(request.projectDir, request.segment);
     const QString storeKey = qpath(paths.dir);
+    if (!resolveVersion(paths, request, options, out))
+        return out;
 
     if (_session)
         closeSession();
@@ -1231,7 +1262,9 @@ SaveRequest InkLabelController::makeSaveRequest(Target target, bool overwriteExt
     req.expectedSha256 = _session->expectedSha;
     const auto counts = _session->raster.counts();
     const bool anyValidation = counts[4] + counts[5] + counts[6] + counts[7] > 0;
-    req.writeValidation = anyValidation || _session->validationFileExists;
+    // A numbered version always has all three kinds, so the trainer's
+    // newest-version pick per kind cannot mix versions.
+    req.writeValidation = anyValidation || _session->validationFileExists || _session->info.paths.version > 1;
 
     Sidecar& s = req.sidecar;
     s.canvas = canvasKeyFor(_session->info.canvas);
@@ -1255,6 +1288,7 @@ QFuture<SaveOutcome> InkLabelController::startWrite(SaveRequest request)
 {
     const QString storeKey = qpath(request.paths.dir);
     const Target target = request.target;
+    const int version = request.paths.version;
     const uint64_t generation = _session ? _session->generation : 0;
     std::shared_ptr<QLockFile> lock = _session ? _session->lock : nullptr;
     const uint64_t id = _nextWriteId++;
@@ -1270,7 +1304,7 @@ QFuture<SaveOutcome> InkLabelController::startWrite(SaveRequest request)
         _checkpointedThisRun.insert(storeKey);
 
     auto* watcher = new QFutureWatcher<SaveOutcome>(this);
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, storeKey, id, generation, lock, target]() {
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, storeKey, id, generation, lock, target, version]() {
         watcher->deleteLater();
         const SaveOutcome outcome = watcher->result();
         if (auto it = _inFlight.find(storeKey); it != _inFlight.end() && it->id == id)
@@ -1280,6 +1314,14 @@ QFuture<SaveOutcome> InkLabelController::startWrite(SaveRequest request)
                 // The save deleted the checkpoint: a later open of this store
                 // must not restore it without asking.
                 _checkpointedThisRun.remove(storeKey);
+                if (_session->info.paths.version != version) {
+                    // Saved as a new version: the session moves to it, and
+                    // the old version's checkpoint is superseded.
+                    removeTarget(_session->info.paths, Target::Autosave);
+                    _checkpointedThisRun.remove(_session->storeKey());
+                    _session->info.paths.version = version;
+                    _session->expectedSha.clear();
+                }
                 _session->history.markClean(outcome.stateSerial);
                 for (const auto& [kind, sha] : outcome.sha256)
                     _session->expectedSha[kind] = sha;
@@ -1324,6 +1366,189 @@ QFuture<SaveOutcome> InkLabelController::save(const SaveOptions& options)
     SaveRequest request = makeSaveRequest(Target::Trainer, options.overwriteExternalEdits);
     _session->lastWriteMs = nowMs();
     return startWrite(std::move(request));
+}
+
+QFuture<SaveOutcome> InkLabelController::saveAsNewVersion()
+{
+    QString why;
+    if (!canEdit(&why))
+        return readyOutcome(failedOutcome(why));
+    finishTransaction();
+    if (auto it = _inFlight.find(_session->storeKey()); it != _inFlight.end()) {
+        if (it->target == Target::Trainer)
+            return readyOutcome(failedOutcome(tr("A save of these labels is already running.")));
+        it->future.waitForFinished();
+    }
+    const std::vector<int> existing = versions();
+    const int next = std::max(existing.empty() ? 1 : existing.back(), _session->info.paths.version) + 1;
+    SaveRequest request = makeSaveRequest(Target::Trainer, false);
+    request.paths.version = next;
+    request.writeValidation = true;
+    request.expectedSha256.clear();
+    _session->lastWriteMs = nowMs();
+    return startWrite(std::move(request));
+}
+
+std::vector<int> InkLabelController::versions() const
+{
+    if (!_session)
+        return {};
+    std::vector<int> list = listVersions(_session->info.paths.dir, _session->info.paths.prefix);
+    if (std::find(list.begin(), list.end(), _session->info.paths.version) == list.end()) {
+        list.push_back(_session->info.paths.version);
+        std::sort(list.begin(), list.end());
+    }
+    return list;
+}
+
+InkLabelController::OpenOutcome InkLabelController::openVersion(int version)
+{
+    OpenOptions options;
+    options.version = version;
+    if (_session && _session->info.paths.version == version)
+        return openForActiveSegment(options);
+    // A different version of the same store: release this one first.
+    closeSession();
+    return openForActiveSegment(options);
+}
+
+InkLabelController::OpenOutcome InkLabelController::startNewVersion()
+{
+    OpenOutcome failure;
+    const auto request = activeSegmentRequest(failure);
+    if (!request)
+        return failure;
+    const StorePaths paths = storePathsFor(request->projectDir, request->segment);
+    const std::vector<int> existing = listVersions(paths.dir, paths.prefix);
+    OpenOptions options;
+    options.version = (existing.empty() ? 1 : existing.back()) + 1;
+    options.createVersion = true;
+    closeSession();
+    OpenOutcome out = openStore(*request, options);
+    if (out.ok)
+        statusMessage(tr("Ink labels: started empty version %1; Save writes it").arg(options.version), 5000);
+    return out;
+}
+
+QJsonObject InkLabelController::datasetEntry() const
+{
+    if (!_session)
+        return {};
+    const fs::path projectDir = _session->info.paths.dir.parent_path().parent_path();
+    return vc3d::ink_labels::datasetEntry(_session->info.paths, projectDir, versions());
+}
+
+QString InkLabelController::datasetEntryText() const
+{
+    if (!_session)
+        return {};
+    return QString::fromUtf8(QJsonDocument(datasetEntry()).toJson(QJsonDocument::Indented));
+}
+
+bool InkLabelController::importFile(const fs::path& path, const ImportOptions& options)
+{
+    QString why;
+    if (!canStartAssist(&why)) {
+        statusMessage(why, 4000);
+        return false;
+    }
+    finishTransaction();
+    const vc::RenderCanvas canvas = _session->info.canvas;
+    const uint64_t serial = _session->history.nextSerial();
+    const uint64_t baseSerial = _session->history.stateSerial();
+    TileRaster snapshot = _session->raster.snapshot();
+    const QString name = qpath(path.filename());
+    startAssist([=, snapshot = std::move(snapshot)]() mutable {
+        AssistResult r;
+        r.what = tr("import %1").arg(name);
+        r.editKind = QStringLiteral("import");
+        r.importPath = qpath(path);
+        r.importOptions = options;
+        r.baseSerial = baseSerial;
+        // The edit is made on the snapshot (its tiles are cloned on write) and
+        // replayed onto the live raster if nothing changed meanwhile.
+        EditTxn txn(snapshot, r.what.toStdString(), Actor::User);
+        r.import = importLabel(path, canvas, options, txn);
+        if (r.import->ok)
+            r.entry = txn.commit(serial);
+        return r;
+    });
+    return true;
+}
+
+void InkLabelController::finishImport(const AssistResult& result)
+{
+    const ImportOutcome& outcome = *result.import;
+    if (!outcome.ok) {
+        if (!outcome.needsDecision)
+            statusMessage(tr("Ink labels: %1 failed: %2").arg(result.what, outcome.error), 8000);
+        emit assistChanged();
+        emit importFinished(result.importPath, outcome, result.importOptions);
+        return;
+    }
+    // Replay only onto the state the import read.
+    bool current = result.entry && _session->history.stateSerial() == result.baseSerial && !_session->txn;
+    if (current)
+        for (const auto& change : result.entry->changes)
+            current = current && _session->raster.tile(change.index).sameAs(change.before);
+    if (!current) {
+        ImportOutcome changed = outcome;
+        changed.ok = false;
+        changed.error = tr("The labels changed while %1 was read; import it again.").arg(QFileInfo(result.importPath).fileName());
+        statusMessage(changed.error, 6000);
+        emit assistChanged();
+        emit importFinished(result.importPath, changed, result.importOptions);
+        return;
+    }
+    // The first edit of a new store takes its folder and lock.
+    QString why;
+    if (!prepareEdit(&why)) {
+        ImportOutcome refused = outcome;
+        refused.ok = false;
+        refused.error = why;
+        statusMessage(why, 6000);
+        emit assistChanged();
+        emit importFinished(result.importPath, refused, result.importOptions);
+        return;
+    }
+    cv::Rect rect;
+    if (!result.entry->changes.empty()) {
+        for (const auto& change : result.entry->changes) {
+            _session->raster.setTile(change.index, change.after);
+            const cv::Rect t = _session->raster.tileRect(change.index);
+            rect = rect.empty() ? t : (rect | t);
+        }
+        HistoryEntry entry = *result.entry;
+        QJsonObject byActor = _session->edits.value(QStringLiteral("user")).toObject();
+        byActor[QStringLiteral("import")] = byActor.value(QStringLiteral("import")).toInt() + 1;
+        _session->edits[QStringLiteral("user")] = byActor;
+        _session->history.push(std::move(entry));
+        _session->lastCommitMs = nowMs();
+        _session->lastPoint.reset();
+    }
+    QJsonObject record;
+    record["kind"] = QStringLiteral("import");
+    record["source"] = result.importPath;
+    record["format"] = QString::fromLatin1(formatName(outcome.format));
+    record["label"] = QString::fromLatin1(kindName(result.importOptions.kind));
+    record["source_shape"] = QJsonArray{outcome.sourceShape.width, outcome.sourceShape.height};
+    record["resampled_from"] = outcome.resampledFrom;
+    record["pixels"] = double(outcome.setPixels);
+    record["at_utc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    _session->provenance.append(record);
+    while (_session->provenance.size() > kMaxProvenanceEntries)
+        _session->provenance.removeFirst();
+    notifyRasterChanged(rect);
+    notifyHistory();
+    for (const QString& warning : outcome.warnings)
+        statusMessage(warning, 6000);
+    statusMessage(tr("Ink labels: imported %1 (%2 px %3)")
+                      .arg(QFileInfo(result.importPath).fileName())
+                      .arg(outcome.setPixels)
+                      .arg(QString::fromLatin1(kindName(result.importOptions.kind))),
+                  5000);
+    emit assistChanged();
+    emit importFinished(result.importPath, outcome, result.importOptions);
 }
 
 void InkLabelController::saveInteractive()
@@ -1875,6 +2100,10 @@ void InkLabelController::finishAssist(const AssistResult& result)
     if (!result.error.isEmpty()) {
         statusMessage(tr("Ink labels: %1 failed: %2").arg(result.what, result.error), 6000);
         emit assistChanged();
+        return;
+    }
+    if (result.import) {
+        finishImport(result);
         return;
     }
     if (result.suggestions) {

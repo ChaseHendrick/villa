@@ -6,6 +6,7 @@
 // agent bridge both drive this one controller.
 
 #include "ink_labels/InkLabelAssist.hpp"
+#include "ink_labels/InkLabelImport.hpp"
 #include "ink_labels/InkLabelRaster.hpp"
 #include "ink_labels/InkLabelStore.hpp"
 
@@ -15,6 +16,7 @@
 #include <QDateTime>
 #include <QFuture>
 #include <QHash>
+#include <QJsonObject>
 #include <QList>
 #include <QObject>
 #include <QPointer>
@@ -88,11 +90,16 @@ public:
         ReadFailed,
         LockedByOther,    // readOnlyIfLocked is false and another VC3D holds it
         Busy,             // another open is waiting for an answer, or the segment changed meanwhile
+        NoVersion,        // the requested label version does not exist
     };
 
     struct OpenOptions {
         vc3d::ink_labels::RecoverPolicy recover = vc3d::ink_labels::RecoverPolicy::Ask;
         bool readOnlyIfLocked = true;
+        // Label version: 0 opens the newest one in the store (1 if none).
+        int version = 0;
+        // Allow a version newer than every existing one: a new, empty version.
+        bool createVersion = false;
     };
 
     struct OpenOutcome {
@@ -168,6 +175,26 @@ public:
     void closeSession();
     QFuture<vc3d::ink_labels::SaveOutcome> save();
     QFuture<vc3d::ink_labels::SaveOutcome> save(const SaveOptions& options);
+    // Writes all three kinds as version max+1 (validation all zero if
+    // unused), so the trainer's per-kind newest-version pick stays paired;
+    // the session continues on the new version.
+    QFuture<vc3d::ink_labels::SaveOutcome> saveAsNewVersion();
+    // Label versions in the session's store.
+    [[nodiscard]] std::vector<int> versions() const;
+    // Opens another version of the active segment's labels.
+    OpenOutcome openVersion(int version);
+    // From a locked layer: start empty labels as a new version on the
+    // segment's current canvas.
+    OpenOutcome startNewVersion();
+    // Reads a label image into one label bit on a worker and applies it as
+    // one undo entry. A result that needs a decision (a legacy mask, a
+    // resample) is reported through importFinished with needsDecision set and
+    // nothing applied.
+    bool importFile(const std::filesystem::path& path, const vc3d::ink_labels::ImportOptions& options);
+    // The trainer's dataset entry for the session's segment and version (see
+    // vc3d::ink_labels::datasetEntry), and the same as indented JSON text.
+    [[nodiscard]] QJsonObject datasetEntry() const;
+    [[nodiscard]] QString datasetEntryText() const;
     // GUI save: asks before overwriting files changed outside VC3D.
     void saveInteractive();
     [[nodiscard]] bool saveInFlight() const;
@@ -284,6 +311,8 @@ signals:
     void saveFinished(const vc3d::ink_labels::SaveOutcome& outcome);
     void assistChanged();
     void assistFinished(const QString& what, quint64 changedPixels);
+    void importFinished(const QString& path, const vc3d::ink_labels::ImportOutcome& outcome,
+                        const vc3d::ink_labels::ImportOptions& options);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -332,6 +361,12 @@ private:
         vc3d::ink_labels::PaintOp op;
         std::optional<vc3d::ink_labels::SuggestionSet> suggestions;
         QString error;
+        // Imports: the outcome and the edit, made on a copy of the raster.
+        std::optional<vc3d::ink_labels::ImportOutcome> import;
+        std::optional<vc3d::ink_labels::HistoryEntry> entry;
+        vc3d::ink_labels::ImportOptions importOptions;
+        QString importPath;
+        uint64_t baseSerial = 0;
     };
 
     struct OpenRequest {
@@ -351,6 +386,9 @@ private:
     // do with a checkpoint, then load. The lock and folder of a store that
     // does not exist yet are taken at the first edit.
     OpenOutcome openStore(const OpenRequest& request, const OpenOptions& options);
+    // Picks the label version to open: the newest, or the one asked for.
+    bool resolveVersion(vc3d::ink_labels::StorePaths& paths, const OpenRequest& request, const OpenOptions& options,
+                        OpenOutcome& out) const;
     bool acquireLock(Session& session, const OpenOptions& options, std::shared_ptr<QLockFile> heldLock, OpenOutcome& out);
     struct Sidecars {
         std::optional<vc3d::ink_labels::Sidecar> trainer;
@@ -378,6 +416,7 @@ private:
     bool canStartAssist(QString* why) const;
     void startAssist(std::function<AssistResult()> work);
     void finishAssist(const AssistResult& result);
+    void finishImport(const AssistResult& result);
     [[nodiscard]] std::optional<cv::Rect> visibleLabelRect(VolumeViewerBase* viewer) const;
     [[nodiscard]] cv::Rect defaultBound() const;
     void refreshSuggestionPreview();
