@@ -2022,6 +2022,293 @@
         "type": "object"
       }
     },
+    "regions.delete": {
+      "errors": [
+        -32602,
+        -32000,
+        -32005,
+        -32007
+      ],
+      "mcp": {
+        "paramRenames": {
+          "expectedRevision": "expected_revision"
+        },
+        "tool": "vc3d_delete_region"
+      },
+      "params": {
+        "properties": {
+          "expectedRevision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "regions.export": {
+      "errors": [
+        -32602,
+        -32000,
+        -32001,
+        -32004,
+        -32005,
+        -32007,
+        -32009
+      ],
+      "mcp": {
+        "extraParams": [
+          "wait"
+        ],
+        "paramRenames": {
+          "outputDir": "output_dir",
+          "volumeId": "volume_id"
+        },
+        "tool": "vc3d_export_region"
+      },
+      "params": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "level": {
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "outputDir": {
+            "type": "string"
+          },
+          "volumeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
+    "regions.list": {
+      "errors": [
+        -32602,
+        -32000,
+        -32007
+      ],
+      "mcp": {
+        "tool": "vc3d_list_regions"
+      },
+      "params": {
+        "properties": {
+          "full": {
+            "default": false,
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "regions.save": {
+      "errors": [
+        -32602,
+        -32000,
+        -32001,
+        -32003,
+        -32005,
+        -32007,
+        -32009
+      ],
+      "mcp": {
+        "paramRenames": {
+          "dryRun": "dry_run",
+          "expectedRevision": "expected_revision"
+        },
+        "tool": "vc3d_save_region"
+      },
+      "params": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "dryRun": {
+            "default": false,
+            "type": "boolean"
+          },
+          "expectedRevision": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "shape": {
+            "properties": {
+              "max": {
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "type": "object"
+              },
+              "min": {
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "z": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y",
+                  "z"
+                ],
+                "type": "object"
+              },
+              "radiusMax": {
+                "type": "number"
+              },
+              "radiusMin": {
+                "type": "number"
+              },
+              "seam": {
+                "enum": [
+                  "+x",
+                  "-x",
+                  "+y",
+                  "-y"
+                ],
+                "type": "string"
+              },
+              "thetaStartDeg": {
+                "type": "number"
+              },
+              "thetaSweepDeg": {
+                "type": "number"
+              },
+              "type": {
+                "enum": [
+                  "box",
+                  "ray_arc"
+                ],
+                "type": "string"
+              },
+              "zMax": {
+                "type": "number"
+              },
+              "zMin": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "resolved"
+            ],
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "regions.stats": {
+      "errors": [
+        -32602,
+        -32000,
+        -32001,
+        -32004,
+        -32005,
+        -32007,
+        -32009
+      ],
+      "mcp": {
+        "extraParams": [
+          "wait"
+        ],
+        "paramRenames": {
+          "volumeId": "volume_id"
+        },
+        "tool": "vc3d_region_stats"
+      },
+      "params": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "level": {
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "percentiles": {
+            "items": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "threshold": {
+            "type": "number"
+          },
+          "volumeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "type": "object"
+      }
+    },
     "render.tifxyz": {
       "errors": [
         -32602,

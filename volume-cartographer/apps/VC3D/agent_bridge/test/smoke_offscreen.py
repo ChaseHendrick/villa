@@ -296,10 +296,10 @@ def check_rpc_describe(
         coverage = description.get("coverage", {})
         complete = (
             description.get("undocumented") == []
-            and coverage.get("described") == 120
-            and coverage.get("registered") == 120
+            and coverage.get("described") == 125
+            and coverage.get("registered") == 125
             and coverage.get("complete") is True
-            and len(snapshot["methods"]) == 120
+            and len(snapshot["methods"]) == 125
         )
         rendered = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
         if update_snapshot:
@@ -358,6 +358,142 @@ def check_rpc_describe(
         {"requiredTags": None, "excludedTags": None},
     )
     results.record("atlas_null_tag_filters", ok, detail)
+
+
+def expect_bridge_error(client: BridgeClient, method: str, params: object,
+                        code: int, **data: object) -> tuple[bool, str]:
+    """Calls `method`; expects BridgeError(code) whose data has these items."""
+    try:
+        result, _ = client.call(method, params, timeout=RPC_TIMEOUT)
+        return False, f"expected {code}, got result keys={list(result)[:6]}"
+    except BridgeError as e:
+        if e.code != code:
+            return False, f"expected code {code}, got {e.code} ({e.message})"
+        for key, value in data.items():
+            if e.data.get(key) != value:
+                return False, f"expected data.{key}={value!r}, got {e.data.get(key)!r}"
+        return True, f"code={e.code} data={e.data}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"unexpected {type(e).__name__}: {e}"
+
+
+def check_regions(client: BridgeClient, results: Results, tmp_path: Path) -> None:
+    """regions.*: ownership, patch rules, revisions, errors, a stats job and
+    an export job on the 16^3 all-fill smoke volume."""
+    box = {"type": "box", "min": {"x": 2, "y": 2, "z": 2}, "max": {"x": 10, "y": 10, "z": 10}}
+
+    ok, detail = expect_param_error(client, "regions.save", {"shape": box, "revision": 3}, "revision")
+    results.record("regions_server_owned_field", ok, detail)
+    ok, detail = expect_param_error(
+        client, "regions.save",
+        {"shape": {**box, "umbilicus": {"controlPoints": []}}}, "shape.umbilicus")
+    results.record("regions_server_owned_umbilicus", ok, detail)
+
+    try:
+        preview, _ = client.call("regions.save", {"shape": box, "dryRun": True}, timeout=RPC_TIMEOUT)
+        listed, _ = client.call("regions.list", {}, timeout=RPC_TIMEOUT)
+        results.record(
+            "regions_dry_run_writes_nothing",
+            preview.get("dryRun") is True and listed.get("regions") == [],
+            f"dryRun={preview.get('dryRun')} listed={len(listed.get('regions', []))}",
+        )
+    except Exception as e:  # noqa: BLE001
+        results.record("regions_dry_run_writes_nothing", False, f"{type(e).__name__}: {e}")
+
+    region_id = None
+    try:
+        created, _ = client.call("regions.save", {"name": "smoke box", "shape": box}, timeout=RPC_TIMEOUT)
+        region_id = created.get("id")
+        center = created.get("computed", {}).get("center")
+        results.record(
+            "regions_create",
+            created.get("revision") == 1 and created.get("shapeFrame") == "volume"
+            and created.get("shape") == box and center == {"x": 6.0, "y": 6.0, "z": 6.0},
+            f"revision={created.get('revision')} shape={created.get('shape')} center={center}",
+        )
+        patched, _ = client.call(
+            "regions.save",
+            {"id": region_id, "expectedRevision": 1, "shape": {"type": "box", "max": {"x": 12, "y": 10, "z": 10}}},
+            timeout=RPC_TIMEOUT)
+        shape = patched.get("shape", {})
+        results.record(
+            "regions_same_type_patch",
+            patched.get("revision") == 2 and shape.get("min") == box["min"]
+            and shape.get("max") == {"x": 12, "y": 10, "z": 10},
+            f"revision={patched.get('revision')} shape={shape}",
+        )
+    except Exception as e:  # noqa: BLE001
+        results.record("regions_create", False, f"{type(e).__name__}: {e}")
+
+    if region_id:
+        ok, detail = expect_bridge_error(
+            client, "regions.save", {"id": region_id, "expectedRevision": 1, "name": "x"},
+            -32602, param="expectedRevision", currentRevision=2)
+        results.record("regions_stale_revision", ok, detail)
+        ok, detail = expect_param_error(
+            client, "regions.save", {"id": region_id, "shape": {"type": "ray_arc", "zMax": 5}},
+            "shape.thetaStartDeg")
+        results.record("regions_type_change_needs_all_fields", ok, detail)
+        ok, detail = expect_bridge_error(
+            client, "regions.save",
+            {"id": region_id, "shape": {"type": "box", "max": {"x": 100, "y": 10, "z": 10}}},
+            -32003, param="shape.max")
+        results.record("regions_point_outside_volume", ok, detail)
+        ok, detail = expect_param_error(
+            client, "regions.save", {"id": region_id, "shape": {"type": "box", "seam": "+y"}}, "shape.seam")
+        results.record("regions_seam_on_box", ok, detail)
+
+    arc = {"type": "ray_arc", "thetaStartDeg": 30, "thetaSweepDeg": 25,
+           "radiusMin": 2, "radiusMax": 6, "zMin": 2, "zMax": 10}
+    ok, detail = expect_bridge_error(client, "regions.save", {"shape": arc}, -32007, kind="umbilicus")
+    results.record("regions_arc_without_umbilicus", ok, detail)
+    ok, detail = expect_bridge_error(client, "regions.list", {"id": "no-such-region"}, -32007, kind="region")
+    results.record("regions_unknown_id", ok, detail)
+
+    if region_id:
+        try:
+            started, _ = client.call("regions.stats", {"ids": [region_id], "level": 0}, timeout=RPC_TIMEOUT)
+            status = wait_for_job(client, started["jobId"])
+            stats = ((status.get("result") or {}).get("stats") or [{}])[0]
+            # 11 x 9 x 9 voxels of an all-fill (0) volume.
+            results.record(
+                "regions_stats_job",
+                started.get("source") == "region" and status.get("state") == "succeeded"
+                and stats.get("count") == 891 and stats.get("max") == 0 and stats.get("fill_chunks") == 1,
+                f"state={status.get('state')} count={stats.get('count')} fill={stats.get('fill_chunks')}",
+            )
+        except Exception as e:  # noqa: BLE001
+            results.record("regions_stats_job", False, f"{type(e).__name__}: {e}")
+        ok, detail = expect_param_error(
+            client, "regions.export", {"id": region_id, "level": 0, "outputDir": "relative/crop"}, "outputDir")
+        results.record("regions_export_relative_dir", ok, detail)
+        try:
+            out_dir = tmp_path / "region-crop"
+            started, _ = client.call(
+                "regions.export", {"id": region_id, "level": 0, "outputDir": str(out_dir)}, timeout=RPC_TIMEOUT)
+            status = wait_for_job(client, started["jobId"])
+            manifest = (status.get("result") or {}).get("manifest") or {}
+            results.record(
+                "regions_export_job",
+                started.get("kind") == "regions.export" and status.get("state") == "succeeded"
+                and (out_dir / "manifest.json").is_file() and (out_dir / "volume.zarr").is_dir()
+                and (manifest.get("source_volume") or {}).get("level") == 0
+                and (manifest.get("crop") or {}).get("shape_zyx") == [9, 9, 11],
+                f"state={status.get('state')} message={status.get('message')} files={sorted(x.name for x in out_dir.iterdir()) if out_dir.is_dir() else None}",
+            )
+        except Exception as e:  # noqa: BLE001
+            results.record("regions_export_job", False, f"{type(e).__name__}: {e}")
+        try:
+            deleted, _ = client.call("regions.delete", {"id": region_id, "expectedRevision": 2}, timeout=RPC_TIMEOUT)
+            listed, _ = client.call("regions.list", {}, timeout=RPC_TIMEOUT)
+            results.record(
+                "regions_delete",
+                deleted.get("deleted") is True and listed.get("regions") == []
+                and str(deleted.get("trashPath", "")).endswith(f".trash/{region_id}.region.json"),
+                f"deleted={deleted} listed={len(listed.get('regions', []))}",
+            )
+        except Exception as e:  # noqa: BLE001
+            results.record("regions_delete", False, f"{type(e).__name__}: {e}")
 
 
 def check_viewer_normalization(client: BridgeClient, results: Results) -> None:
@@ -1807,6 +1943,8 @@ def main() -> int:
             check_viewer_normalization(client, results)
             require_running(proc, results, "viewer normalization")
             check_canvas_normalization(client, results)
+            check_regions(client, results, tmp_path)
+            require_running(proc, results, "regions")
 
             check_volume_attach(client, results, tmp_path, volpkg)
             check_segments_attach(client, results, tmp_path, volpkg)

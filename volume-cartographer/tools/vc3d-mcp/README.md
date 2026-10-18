@@ -222,6 +222,7 @@ Tool names use a `vc3d_` prefix and snake_case. The surface includes:
 - segment loading, growth, editing, masks, refinement, and review;
 - points, tags, winding annotations, seeding, and push/pull;
 - fiber annotation, Atlas search, and Lasagna workflows;
+- regions (3D boxes and ray arcs) with their statistics and crop exports;
 - tracing, flattening, rendering, jobs, progress, and cancellation.
 
 The MCP client displays each installed tool with its current description and

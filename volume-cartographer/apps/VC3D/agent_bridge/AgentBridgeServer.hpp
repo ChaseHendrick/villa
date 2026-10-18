@@ -31,6 +31,7 @@ class QLocalServer;
 class QLocalSocket;
 class QTimer;
 class CWindow;
+class RegionController;
 class VolumeViewerBase;
 struct CommandLaunchError;
 
@@ -87,6 +88,7 @@ private:
     void registerPointsHandlers();
     void registerSeedingHandlers();
     void registerSurfaceOpsHandlers();
+    void registerRegionHandlers();
     void registerMethod(AgentBridgeMethod method, Handler handler);
 
     // --- Discovery registry file (mirrors LasagnaServiceManager's
@@ -298,6 +300,16 @@ private:
     QJsonObject handleSegmentAppendMask(const QJsonValue& params);
     QJsonObject handleSegmentMask(const QJsonValue& params, bool append);
 
+    // Regions of interest (AgentBridgeHandlers_regions.cpp), thin handlers
+    // over RegionController. regionController() requires a saved project
+    // (-32000) and a live controller (-32010).
+    RegionController* regionController() const;
+    QJsonObject handleRegionsList(const QJsonValue& params);
+    QJsonObject handleRegionsSave(const QJsonValue& params);
+    QJsonObject handleRegionsDelete(const QJsonValue& params);
+    QJsonObject handleRegionsStats(const QJsonValue& params);
+    QJsonObject handleRegionsExport(const QJsonValue& params);
+
     // --- Open Data manifest acquisition ---
     // Serves the cached manifest synchronously when available and `refresh` is
     // false; otherwise starts an async re-fetch with a 30-second deadline and
@@ -394,6 +406,12 @@ private:
     // Resolves the active "catalog" job when an async catalog.open_sample
     // finishes: stores the result body in the job record and calls finishJob.
     void completeCatalogOpenJob(const MenuActionController::OpenDataSampleOpenOutcome& outcome);
+    // Region statistics and export lifecycle -> source:"region" JobRecord.
+    // RegionController runs one job at a time and reports jobs started from
+    // the Regions dock too, so both register here.
+    void handleRegionJobStarted(const QString& kind, const QString& label);
+    void handleRegionJobProgress(double fraction);
+    void handleRegionJobFinished(bool success, const QString& message, const QJsonObject& result, const QStringList& outputPaths);
     void completeVolumeAttachmentJob(const VolumeAttachmentOutcome& outcome);
 
     // --- Deferred responses ---

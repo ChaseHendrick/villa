@@ -193,10 +193,15 @@ per source is tracked:
 | `flatten` | SLIM, ABF, and straighten lifecycle |
 | `seeding` | bridge-started run or expand batch |
 | `autosave` | explicit dirty-segment save |
+| `region` | `RegionController` statistics and crop-export lifecycle |
 
 Application work started outside the bridge is represented when its lifecycle
 is observable, but only bridge-started atlas and seeding operations are
-registered as jobs. A source retains its eight most recent terminal records.
+registered as jobs. Region jobs are registered whether they start from the
+Regions dock or the bridge: `RegionController` runs one at a time, so an
+agent sees a dock-started statistics run or crop export in `job.status`, can
+stop it with `job.cancel`, and gets -32004 from `regions.stats` while it runs.
+A source retains its eight most recent terminal records.
 
 `job.status` accepts `jobId`, `source`, or neither. With neither it returns the
 most recently started job across all sources. Its record contains:
@@ -359,6 +364,65 @@ and never open file pickers.
 - Fiber launch and create-atlas operations suppress dataset pickers and atlas
   rebuild prompts; missing prerequisites become ordinary errors.
 
+### Regions
+
+Regions are 3D boxes and ray arcs (annular sectors around the project
+umbilicus) kept with the project, one JSON file each in
+`<project dir>/regions/<project file>/` (`docs/regions.md`). Region files store
+coordinates in the scan's annotation frame; on the wire every coordinate is
+the current volume's voxel coordinate, converted by the region's frame map. A
+region that does not fit the current volume (another scan, a grid or voxel
+size that does not match) is listed with `compatible: false`, an
+`incompatibleReason`, and its shape in its own frame (`shapeFrame: "region"`).
+The project must be saved; an unsaved project returns -32000. The drawing
+tools are not driven from the bridge: an agent sends the shape it wants to
+`regions.save`. The dock's Jump to is `viewer.center_on_point` at
+`computed.center`; Use as focus box, Refresh umbilicus, and the dock's arc
+direction and seam choices have no method of their own.
+
+| Rule | Behavior |
+|---|---|
+| Server-owned: `revision`, `author`, `created`, `modified`, `frame`, `readOnly`, `compatible`, `computed`, `umbilicus` (top level or in `shape`) | supplied, they return -32602 with `data.param` naming the field |
+| No `id` | create; `shape` required |
+| `id` given | update; fields present replace, absent ones stay |
+| `shape` with the same `type` | the fields present replace (changing only `zMax` is one field) |
+| `shape` with another `type` | full replacement; all fields of the new type required |
+| Ray arc umbilicus | never sent by the client; VC3D embeds the project's resolved umbilicus |
+| Ray arc `seam` | where theta = 0 points from the umbilicus (`+x`, `-x`, `+y`, `-y`); a new arc defaults to `+x`, independent of the Regions dock's choice |
+
+- `regions.list` returns `{directory, regions, loadErrors}`. Each region doc
+  carries a read-only `computed` object: `bounds`, `center` (pass it to
+  `viewer.center_on_point` before `screenshot.capture`), `bytesPerLevel`
+  (`{level, voxels, bytes}` per stored level), `voxelEstimateLevel0` (the
+  level-0 count, absent when the volume stores no level 0), `autoLevel`, and
+  the saved `stats` (`{volumeId, level, stale, path}`). A ray arc adds
+  `umbilicusCenter`, the umbilicus center at the arc's middle slice, from
+  which its radii and (with the shape's `seam`) its angles are measured.
+  Ray arc umbilicus control points are included only with `id` or `full`.
+- `regions.save` with `dryRun` makes every check a save makes (a ray arc
+  must compile) and returns the doc it would write, with the umbilicus
+  control points, without writing.
+  `expectedRevision` refuses a stale write with -32602, `data.param:
+  "expectedRevision"` and `data.currentRevision`; a file changed on disk by
+  another writer is refused the same way after it is reloaded. Read-only and
+  incompatible regions return -32009. A point outside the current volume
+  returns -32003. A ray arc without a usable umbilicus returns -32007 with
+  `data.kind: "umbilicus"` and names both remedies.
+- `regions.delete` moves the file (and its statistics) to the regions folder's
+  `.trash/`.
+- `regions.stats` measures 1 to 64 regions on one volume at one level as one
+  `region` job. Its terminal `result` is `{stats: [stats document],
+  outputPaths}`; the statistics are also saved per volume and level.
+  `job.cancel` reaches the job's cancel flag. A region above 8 GiB of voxels
+  at the level is refused with `data.param: "level"`.
+- `regions.export` saves one region's voxels at one level (`"auto"` or
+  omitted: the level `regions.stats` would pick) as a local zarr crop, a
+  `region` job like the dock's Export crop. `outputDir` must be absolute and
+  empty or absent (default: `exports/` under the regions folder). Its
+  terminal `result` is `{manifest, outputPaths}`; a ray arc's crop adds
+  `mask.zarr`. Crops above 8 GiB are refused with `data.param: "level"`.
+  It is the agent's way to the voxels themselves, for analysis outside VC3D.
+
 ### Seeding, rendering, flattening, and mesh operations
 
 - Seeding run and expand share one `seeding` source. Preview, cast, reset, and
@@ -424,7 +488,7 @@ is the sole bridge method without an MCP tool.
 | `vc3d_atlas_search_start` | `atlas.search_start` |
 | `vc3d_atlas_status` | `atlas.status` |
 | `vc3d_auto_fill_windings` | `points.auto_fill_windings` |
-| `vc3d_cancel_job` | `job.cancel` | Request cancellation of a running job by `jobId` (or by `source`). Only `tool`/`atlas`/`seeding`/`lasagna` jobs are cancellable; `growth`/`flatten`/`catalog`/`volume`/`autosave` return an error. Request-only — poll `vc3d_job_status` for the terminal state. |
+| `vc3d_cancel_job` | `job.cancel` | Request cancellation of a running job by `jobId` (or by `source`). Only `tool`/`atlas`/`seeding`/`lasagna`/`region` jobs are cancellable; `growth`/`flatten`/`catalog`/`volume`/`autosave` return an error. Request-only; poll `vc3d_job_status` for the terminal state. |
 | `vc3d_center_viewer` | `viewer.center_on_point` | Center a viewer pane on a 3D volume point. |
 | `vc3d_clear_all_points` | `points.clear_all` |
 | `vc3d_clear_point_collection` | `points.clear_collection` |
@@ -435,10 +499,12 @@ is the sole bridge method without an MCP tool.
 | `vc3d_create_editable_segment_copy` | `segments.create_editable_copy` | Copy a fetched immutable Open Data catalog segment into the project's editable storage, attach it, and activate it. Idempotently reuses an existing copy. |
 | `vc3d_create_project` | `project.create` | Create a `.volpkg.json` that references one local zarr volume or remote `.zarr` URL without opening it. |
 | `vc3d_crop_segment_bounds` | `segment.crop_bounds` | Crop a segment's surface grid to its tightest valid bounds. Synchronous. |
+| `vc3d_delete_region` | `regions.delete` | Delete a region; its file and statistics move to the regions folder's `.trash`. |
 | `vc3d_delete_segment` | `segments.delete` | Delete a segment from disk. **Irreversible** — requires `confirm=true`. Fails while segmentation editing is enabled; deleting the active segment is allowed. |
 | `vc3d_describe_catalog_sample` | `catalog.describe_sample` |
 | `vc3d_drag` | `canvas.drag` |
 | `vc3d_enable_editing` | `segmentation.enable_editing` | Turn segmentation editing mode on/off for the active segment. |
+| `vc3d_export_region` | `regions.export` | Save a region's voxels at one level as a local zarr crop (a `region` job, `wait` defaults true). |
 | `vc3d_fetch_segment` | `segments.fetch` | Download ("materialize") an open-data placeholder segment so it can be activated/edited. Sync if already materialized; else a `"catalog"` job (`wait` defaults true). |
 | `vc3d_fiber_create_atlas` | `fiber.create_atlas` |
 | `vc3d_fiber_delete` | `fiber.delete` |
@@ -472,6 +538,7 @@ is the sole bridge method without an MCP tool.
 | `vc3d_list_catalog_samples` | `catalog.list_samples` | List samples available to open from the Open Data catalog; use this for discovery when no volume package is loaded. |
 | `vc3d_list_overlay_volumes` | `viewer.list_overlay_volumes` | List every volume id in the open package and the active workspace's selection. |
 | `vc3d_list_points` | `points.list` | List point collections and their points. |
+| `vc3d_list_regions` | `regions.list` | List the project's regions (3D boxes and ray arcs) with read-only `computed` fields: center, bounds, cost per level, saved statistics. |
 | `vc3d_list_segments` | `segments.list` | List segments in the open volume package with loaded/active flags. |
 | `vc3d_list_attached_volumes` | `volume.list` | List volume ids already attached to the open package; this does not discover catalog data available to open. |
 | `vc3d_load_points_json` | `points.load_json` |
@@ -489,6 +556,7 @@ is the sole bridge method without an MCP tool.
 | `vc3d_push_pull_stop` | `segmentation.push_pull.stop` |
 | `vc3d_recalc_segment_area` | `segment.recalc_area` | Recompute surface area for one or more segments. Synchronous. |
 | `vc3d_refine_segment_alpha_comp` | `segment.refine_alpha_comp` | Alpha-composite refinement of a segment. Asynchronous (`source:"tool"`); rejects remote volumes; supports `wait: bool = false` (30-minute cap). |
+| `vc3d_region_stats` | `regions.stats` | Measure the voxels inside regions on one volume and level as a `region` job (`wait` defaults true); the result lists the statistics documents. |
 | `vc3d_remove_point_collection_tag` | `points.remove_collection_tag` |
 | `vc3d_remove_point` | `points.remove_point` |
 | `vc3d_rename_point_collection` | `points.rename_collection` |
@@ -501,6 +569,7 @@ is the sole bridge method without an MCP tool.
 | `vc3d_run_trace` | `tracer.run_trace` |
 | `vc3d_save_points_json` | `points.save_json` |
 | `vc3d_save_points_segment_path` | `points.save_segment_path` |
+| `vc3d_save_region` | `regions.save` | Create or update a 3D box or ray arc region (current-volume voxel coordinates, patch rules above, `dry_run` to validate only). |
 | `vc3d_save_segment` | `segmentation.save` | Force the active segment's pending autosave to disk. Idle no-op (`jobId:null`) when nothing is dirty; else an `"autosave"` job (`wait` defaults true). |
 | `vc3d_screenshot` | `screenshot.capture` | Capture a PNG of the whole VC3D window or one viewer pane. Returns the PNG as MCP image content when `file_path` is omitted, or a dict with the on-disk path when `file_path` is set (MCP-layer note below). |
 | `vc3d_seeding_analyze_paths` | `seeding.analyze_paths` |

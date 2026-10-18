@@ -354,6 +354,8 @@ set(srcs
     agent_bridge/AgentBridgeHandlers_review.cpp
     agent_bridge/AgentBridgeHandlers_viewer.cpp
     agent_bridge/AgentBridgeHandlers_surfaceops.cpp
+    agent_bridge/AgentBridgeHandlers_regions.cpp
+    agent_bridge/AgentBridgeMethods_regions.cpp
 )
 
 if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)

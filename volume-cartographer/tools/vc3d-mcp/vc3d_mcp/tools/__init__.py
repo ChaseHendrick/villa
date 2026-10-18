@@ -16,6 +16,7 @@ from . import (  # noqa: F401  (imported for their registration side effects)
     lasagna,
     manual_add,
     points,
+    regions,
     review,
     seeding,
     segmentation,

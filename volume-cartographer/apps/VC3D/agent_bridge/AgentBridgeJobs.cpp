@@ -40,6 +40,7 @@
 #include "OpenDataManifest.hpp"
 #include "OpenDataSampleProject.hpp"
 #include "OpenDataSegmentCache.hpp"
+#include "RegionController.hpp"
 #include "SeedingWidget.hpp"
 #include "SegmentationCommandHandler.hpp"
 #include "SurfacePanelController.hpp"
@@ -237,6 +238,23 @@ void AgentBridgeServer::subscribeJobSignals()
                 });
     }
 
+    // Region statistics and export lifecycle -> source:"region" jobs, from
+    // the Regions dock, regions.stats and regions.export alike.
+    if (_window && _window->_regionController) {
+        RegionController* regions = _window->_regionController.get();
+        connect(regions, &RegionController::jobStarted, this,
+                [this](const QString& kind, const QString& label, const QStringList&) {
+                    handleRegionJobStarted(kind, label);
+                });
+        connect(regions, &RegionController::jobProgress, this,
+                [this](const QString&, double fraction) { handleRegionJobProgress(fraction); });
+        connect(regions, &RegionController::jobFinished, this,
+                [this](const QString&, bool success, const QString& message, const QJsonObject& result,
+                       const QStringList& outputPaths) {
+                    handleRegionJobFinished(success, message, result, outputPaths);
+                });
+    }
+
     // Batch seeding lifecycle -> source:"seeding" jobs. Emitted from
     // the SeedingWidget QProcess finished callbacks (run/expand). Only
     // bridge-initiated batches become tracked jobs (see handleSeedingBatch*).
@@ -277,6 +295,9 @@ bool AgentBridgeServer::jobIsRunning(const QString& source) const
         // click is also seen as busy here.
         if (source == QLatin1String("seeding") && _window->_seedingWidget &&
             _window->_seedingWidget->seedingBatchActive())
+            return true;
+        if (source == QLatin1String("region") && _window->_regionController &&
+            _window->_regionController->jobRunning())
             return true;
     }
     return false;
@@ -824,6 +845,14 @@ QJsonObject AgentBridgeServer::handleJobCancel(const QJsonValue& params)
             mgr.stopOptimization();
         else
             mgr.cancelJob(externalId);
+    } else if (outSource == QLatin1String("region")) {
+        // Sets the job's cancel flag; the worker stops at the next chunk and
+        // RegionController::jobFinished resolves the job via finishJob.
+        if (!_window || !_window->_regionController || !_window->_regionController->cancelJob()) {
+            QJsonObject data;
+            data["detail"] = "no running region job to cancel";
+            throw AgentBridgeError{-32005, "Region job not running", data};
+        }
     } else if (outSource == QLatin1String("tool")) {
         // grow/trace/render tools run as CommandLineToolRunner child QProcesses:
         // terminate cleanly; toolFinished then resolves the job via finishJob.
