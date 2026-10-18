@@ -156,6 +156,16 @@ vc_add_test(NAME test_line_annotation_context_menu
     LIBS Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test vc_core
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 
+# Regions (3D box): the Qt-free model, the QtCore file store, and the viewer's
+# pointer gate driven through a real CVolumeViewerView.
+vc_add_test(NAME test_vc3d_regions
+    SOURCES test_vc3d_regions.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionModel.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionStore.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.cpp
+    LIBS doctest::doctest Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test vc_core vc_lasagna
+    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
+
 vc_add_test(NAME test_scale_bar_units
     SOURCES test_scale_bar_units.cpp
             ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.cpp

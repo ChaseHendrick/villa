@@ -131,6 +131,9 @@ class ViewerCompositePanel;
 class LineAnnotationDialog;
 class SpiralWorkspace;
 class FiberMapWorkspace;
+class RegionController;
+class RegionOverlayController;
+class RegionPanel;
 
 class CWindow : public QMainWindow
 {
@@ -529,6 +532,11 @@ private:
     bool _maskRenderInProgress{false};
     std::unique_ptr<SegmentationCommandHandler> _segmentationCommandHandler;
     std::unique_ptr<LineAnnotationController> _lineAnnotationController;
+    // Regions install pointer overrides on _viewerManager's viewers, so they
+    // are declared after it and destroyed first.
+    std::unique_ptr<RegionController> _regionController;
+    std::unique_ptr<RegionOverlayController> _regionOverlay;
+    RegionPanel* _regionPanel{nullptr};
     // Keyboard shortcuts
     QShortcut* fCompositeViewShortcut;
     QShortcut* fDirectionHintsShortcut;

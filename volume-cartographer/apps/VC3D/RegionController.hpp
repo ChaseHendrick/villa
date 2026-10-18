@@ -1,0 +1,165 @@
+#pragma once
+
+// Regions of interest in VC3D: owns the project's region files (through
+// RegionStore), the 3D Box and Edit tools in the slice views, and the region
+// actions (jump to, use as focus box).
+
+#include "RegionModel.hpp"
+#include "RegionStore.hpp"
+#include "volume_viewers/CChunkedVolumeViewer.hpp"
+
+#include <QObject>
+#include <QPointer>
+#include <QString>
+
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+class CState;
+class ViewerManager;
+class VolumeViewerBase;
+
+class RegionController : public QObject
+{
+    Q_OBJECT
+
+public:
+    // True when a press at this scene position belongs to another overlay's
+    // handle (the XY view's plane-rotation handles), which then keeps it.
+    using HandleQuery = std::function<bool(VolumeViewerBase*, const QPointF&)>;
+    using Code = vc3d::regions::Code;
+    using Result = vc3d::regions::Result;
+
+    RegionController(CState* state, ViewerManager* viewers, QObject* parent = nullptr);
+    ~RegionController() override;
+
+    void setForeignHandleQuery(HandleQuery query) { _foreignHandleQuery = std::move(query); }
+
+    // Re-derives the regions folder from the project path (it changes when a
+    // project is first saved or saved under a new name) and reloads when it
+    // moved. Returns true when it changed.
+    bool syncDirectory();
+    QString directory() const;
+    const std::vector<vc3d::regions::Loaded>& regions() const { return _store.regions(); }
+    const std::vector<vc3d::regions::LoadError>& loadErrors() const { return _store.loadErrors(); }
+    const vc3d::regions::Loaded* find(const QString& id) const;
+    vc3d::regions::FrameCheck frameCheck(const vc3d::regions::Region& region) const;
+    // Empty when the tools can be used, else the message the dock shows.
+    QString unavailableReason() const;
+    // The frame and map a region drawn on the current volume gets.
+    std::optional<vc3d::regions::Frame> currentFrame() const;
+    std::optional<vc3d::regions::FrameMap> currentMap() const;
+    QString currentVolumeId() const;
+
+    // Fills id, author, created, color, name and frame when empty.
+    Result create(vc3d::regions::Region draft);
+    Result update(vc3d::regions::Region next, std::optional<std::uint64_t> expectedRevision);
+    // Moves the region file to the regions folder's .trash.
+    Result remove(const QString& id, std::optional<std::uint64_t> expectedRevision);
+
+    void setActive(const QString& id);
+    QString activeId() const { return _activeId; }
+    // Moves the focus point to the region's center, so the slice planes pass
+    // through it, and centers the slice views on it. Moving the focus point
+    // also recenters the segmentation view, as any focus change does.
+    Result jumpTo(const QString& id);
+    // Sets the session focus box to exactly the region's box.
+    Result useAsFocusBox(const QString& id);
+
+    enum class Tool { None, Box };
+    void setTool(Tool tool);
+    Tool tool() const { return _tool; }
+    void setEditing(bool editing);
+    bool editing() const { return _editing; }
+    void setNewBoxDepth(int voxels);
+    int newBoxDepth() const { return _newBoxDepth; }
+    // During a drag, for the overlay: the box being drawn or edited, and the id
+    // of the region being edited (empty for a new box).
+    std::optional<vc3d::regions::Box> draftBox() const { return _draftBox; }
+    QString draftRegionId() const { return _drag ? _drag->regionId : QString(); }
+
+    static std::optional<vc3d::regions::Plane> planeOf(VolumeViewerBase* viewer);
+    static QString nextColor(std::size_t index);
+
+signals:
+    void regionsChanged();
+    void activeRegionChanged(const QString& id);
+    void toolChanged();
+    void draftChanged();
+    void statusMessage(const QString& text, int timeoutMs);
+
+private:
+    struct Drag {
+        enum class Kind { NewBox, Handle };
+        Kind kind = Kind::NewBox;
+        QPointer<CChunkedVolumeViewer> viewer;
+        vc3d::regions::Plane plane;
+        vc3d::regions::PlaneKind planeKind = vc3d::regions::PlaneKind::Tilted;
+        cv::Vec3d pressViewer{0, 0, 0};
+        QPointF pressScene;
+        bool moved = false;
+        vc3d::regions::FrameMap map;
+        cv::Vec3i extentMax{0, 0, 0};
+        // Handle drags only.
+        QString regionId;
+        vc3d::regions::Box startBox;
+        std::uint64_t startRevision = 0;
+        vc3d::regions::Handle handle;
+    };
+
+    // The active box's handle under a scene point, within the pick radius:
+    // corner, edge and center handles on axis planes, z edges on vertical
+    // planes.
+    struct Pick {
+        vc3d::regions::Handle box;
+        vc3d::regions::FrameMap map;
+    };
+    std::optional<Pick> pickHandle(VolumeViewerBase* viewer, const vc3d::regions::Plane& plane, vc3d::regions::PlaneKind kind, const QPointF& scenePos) const;
+    Qt::CursorShape cursorFor(VolumeViewerBase* viewer, const Pick& pick) const;
+    bool handlePointer(CChunkedVolumeViewer* viewer, const CChunkedVolumeViewer::PointerEvent& event);
+    bool handlePress(CChunkedVolumeViewer* viewer, const CChunkedVolumeViewer::PointerEvent& event);
+    void updateDrag(const CChunkedVolumeViewer::PointerEvent& event);
+    void finishDrag(const CChunkedVolumeViewer::PointerEvent& event);
+    void cancelDrag(bool announce);
+    void updateHoverCursor(CChunkedVolumeViewer* viewer, const CChunkedVolumeViewer::PointerEvent& event);
+    void setViewerCursor(CChunkedVolumeViewer* viewer, std::optional<Qt::CursorShape> shape);
+    void clearViewerCursors();
+    QString regionAt(VolumeViewerBase* viewer, const QPointF& scenePos) const;
+    bool outlineContains(VolumeViewerBase* viewer, const vc3d::regions::Box& box, const vc3d::regions::FrameMap& map, const vc3d::regions::Plane& plane, const QPointF& scenePos) const;
+    void centerSlicesOn(const vc3d::regions::Box& box, const vc3d::regions::FrameMap& map, const Drag& drag);
+
+    void attachViewer(VolumeViewerBase* viewer);
+    void cancelGestures();
+    void onProjectChanged();
+    void onVolumeChanged();
+    void refreshVolumeFrame();
+    void rebuildFrameChecks();
+    void emitChanged(const Result& result);
+    QString nextName() const;
+
+    CState* _state = nullptr;
+    ViewerManager* _viewers = nullptr;
+    HandleQuery _foreignHandleQuery;
+    vc3d::regions::RegionStore _store;
+
+    // The current volume, as regions see it.
+    vc3d::annotation::AnnotationFrame _volumeFrame;
+    std::string _volumeSpace;
+    vc3d::regions::Json _volumeIdentity = vc3d::regions::Json::object();
+    std::unordered_map<std::string, vc3d::regions::FrameCheck> _frameChecks;
+
+    QString _activeId;
+    Tool _tool = Tool::None;
+    bool _editing = false;
+    bool _inToolChange = false;
+    int _newBoxDepth = 64;
+    std::optional<Drag> _drag;
+    std::optional<vc3d::regions::Box> _draftBox;
+    std::vector<QPointer<CChunkedVolumeViewer>> _toolViewers;
+    std::unordered_map<CChunkedVolumeViewer*, Qt::CursorShape> _cursors;
+};

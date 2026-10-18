@@ -152,6 +152,9 @@
 #include "SurfacePanelController.hpp"
 #include "elements/DropdownChecklistButton.hpp"
 #include "MenuActionController.hpp"
+#include "RegionController.hpp"
+#include "RegionPanel.hpp"
+#include "overlays/RegionOverlayController.hpp"
 #include "VolumeAttachmentController.hpp"
 #include "FileWatcherService.hpp"
 #include "AxisAlignedSliceController.hpp"
@@ -2895,6 +2898,18 @@ CWindow::CWindow(size_t cacheSizeGB, RenderBenchOptions benchOptions) :
     });
     _planeSlicingOverlay->setAxisAlignedEnabled(_axisAlignedSliceController && _axisAlignedSliceController->isEnabled());
 
+    // Regions use the annotation frame fibers use, so a region and a fiber
+    // agree on which voxels a coordinate names.
+    _regionController = std::make_unique<RegionController>(_state, _viewerManager.get(), this);
+    // A press on the XY view's plane-rotation handles stays the rotation's,
+    // unless it is on one of the active region's own handles.
+    _regionController->setForeignHandleQuery([this](VolumeViewerBase* viewer, const QPointF& scenePos) {
+        return _planeSlicingOverlay && _planeSlicingOverlay->isScenePointNearRotationHandle(viewer, scenePos, 1.0);
+    });
+    connect(_regionController.get(), &RegionController::statusMessage, this, &CWindow::onShowStatusMessage);
+    _regionOverlay = std::make_unique<RegionOverlayController>(_regionController.get(), this);
+    _regionOverlay->bindToViewerManager(_viewerManager.get());
+
     _axisAlignedSliceController->setPlaneSlicingOverlay(_planeSlicingOverlay.get());
     _axisAlignedSliceController->setViewerManager(_viewerManager.get());
 
@@ -3091,6 +3106,7 @@ CWindow::CWindow(size_t cacheSizeGB, RenderBenchOptions benchOptions) :
                                _inkDetectionDock,
                                _transformsDock,
                                static_cast<QDockWidget*>(_atlasControlDock),
+                               static_cast<QDockWidget*>(_regionPanel),
                                _atlasWorkspaceOverviewDock,
                                _atlasWorkspaceSearchDock,
                                static_cast<QDockWidget*>(_atlasWorkspaceFiberDock),
@@ -3137,6 +3153,7 @@ CWindow::CWindow(size_t cacheSizeGB, RenderBenchOptions benchOptions) :
                                _atlasOverviewDock,
                                _atlasSearchDock,
                                static_cast<QDockWidget*>(_atlasControlDock),
+                               static_cast<QDockWidget*>(_regionPanel),
                                _atlasWorkspaceOverviewDock,
                                _atlasWorkspaceSearchDock,
                                static_cast<QDockWidget*>(_atlasWorkspaceFiberDock),
@@ -3528,6 +3545,7 @@ void CWindow::populateDockToggleMenu(QMenu* menu) const
 
     addDock(menu, _point_collection_widget);
     addDock(menu, _wrapAnnotationWidget);
+    addDock(menu, _regionPanel);
 
     if (_fiberWidget || _fiberSliceWidget) {
         auto* fiberMenu = menu->addMenu(tr("Fibers"));
@@ -7742,6 +7760,9 @@ void CWindow::CreateWidgets(void)
 
     _atlasControlDock = new AtlasControlPointsDock(this);
     _segmentWorkspaceWindow->addDockWidget(Qt::RightDockWidgetArea, _atlasControlDock);
+
+    _regionPanel = new RegionPanel(_regionController.get(), this);
+    _segmentWorkspaceWindow->addDockWidget(Qt::RightDockWidgetArea, _regionPanel);
     connect(_atlasControlDock, &AtlasControlPointsDock::resultsChanged,
             this, [this](const AtlasControlPointResults& results) {
                 if (_atlasControlOverlay) {
@@ -8221,6 +8242,7 @@ void CWindow::CreateWidgets(void)
     _segmentWorkspaceWindow->tabifyDockWidget(ui.dockWidgetSegmentation, _point_collection_widget);
     _segmentWorkspaceWindow->tabifyDockWidget(ui.dockWidgetSegmentation, _atlasControlDock);
     _segmentWorkspaceWindow->tabifyDockWidget(ui.dockWidgetSegmentation, _fiberWidget);
+    _segmentWorkspaceWindow->tabifyDockWidget(ui.dockWidgetSegmentation, _regionPanel);
 
     // Make Segmentation dock the active tab by default
     ui.dockWidgetSegmentation->raise();

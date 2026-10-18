@@ -182,6 +182,16 @@ set(srcs
     overlays/RawPointsOverlayController.hpp
     overlays/BBoxOverlayController.cpp
     overlays/BBoxOverlayController.hpp
+    overlays/RegionOverlayController.cpp
+    overlays/RegionOverlayController.hpp
+    RegionModel.cpp
+    RegionModel.hpp
+    RegionStore.cpp
+    RegionStore.hpp
+    RegionController.cpp
+    RegionController.hpp
+    RegionPanel.cpp
+    RegionPanel.hpp
     overlays/PathsOverlayController.cpp
     overlays/PathsOverlayController.hpp
     overlays/VectorOverlayController.cpp

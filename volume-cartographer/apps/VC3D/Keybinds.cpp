@@ -16,6 +16,7 @@ constexpr const char* kSectionApprovalMask = "Approval Mask";
 constexpr const char* kSectionSegGrowth = "Segmentation Growth";
 constexpr const char* kSectionPushPull = "Push/Pull";
 constexpr const char* kSectionPointCollection = "Point Collection";
+constexpr const char* kSectionRegions = "Regions";
 constexpr const char* kSectionMouseControls = "Mouse Controls";
 constexpr const char* kSectionSliceStep = "Z-Scroll Sensitivity";
 // The line annotation workspace owns its panes' keyboard handling, so these
@@ -556,6 +557,11 @@ QString buildKeybindsHelpText()
         { kSectionPushPull, keypress::PushPullRadiusUp.description, HelpKeyType::KeyPress, nullptr, &keypress::PushPullRadiusUp, nullptr },
 
         { kSectionPointCollection, keypress::DeletePoint.description, HelpKeyType::KeyPress, nullptr, &keypress::DeletePoint, nullptr },
+
+        { kSectionRegions, "Draw a 3D box in the XY, XZ or YZ view (3D Box tool)", HelpKeyType::Literal, nullptr, nullptr, "Left Drag" },
+        { kSectionRegions, "Select the region under the cursor (3D Box tool)", HelpKeyType::Literal, nullptr, nullptr, "Left Click" },
+        { kSectionRegions, "Move a box face or corner, or the whole box by its center handle (Edit)", HelpKeyType::Literal, nullptr, nullptr, "Left Drag" },
+        { kSectionRegions, "Cancel the box drag, or leave the region tool", HelpKeyType::KeyPress, nullptr, &keypress::CancelOperation, nullptr },
 
         { kSectionMouseControls, "Select/Add point or drag surface", HelpKeyType::Literal, nullptr, nullptr, "Left Click" },
         { kSectionMouseControls, "Drag surface point or draw with active tool", HelpKeyType::Literal, nullptr, nullptr, "Left Drag" },
