@@ -71,6 +71,28 @@ struct PaintOp {
 }
 inline constexpr uint8_t kNeutralCode = 2;
 
+// Label pixels by meaning, from per-value counts: ink (I set), background
+// (supervised, not ink), validation (V set) and unlabeled (neither I nor S).
+struct LabelCounts {
+    uint64_t ink = 0, background = 0, validation = 0, unlabeled = 0;
+    [[nodiscard]] static LabelCounts from(const std::array<uint64_t, 8>& byValue)
+    {
+        LabelCounts c;
+        for (int v = 0; v < 8; ++v) {
+            const uint64_t n = byValue[std::size_t(v)];
+            if (v & kInk)
+                c.ink += n;
+            else if (v & kSupervision)
+                c.background += n;
+            else
+                c.unlabeled += n;
+            if (v & kValidation)
+                c.validation += n;
+        }
+        return c;
+    }
+};
+
 struct Tile {
     std::array<uint8_t, kTilePixels> px{};
     // Level-3 display codes: one per 8 x 8 pixel cell, pooled over in-canvas

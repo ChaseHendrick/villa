@@ -1,15 +1,31 @@
 // Ink labels: raster, history, files, controller, overlay and keys.
 
+#include "Keybinds.hpp"
+#include "ink_labels/InkLabelController.hpp"
 #include "ink_labels/InkLabelRaster.hpp"
 #include "ink_labels/InkLabelStore.hpp"
+#include "overlays/InkLabelOverlayController.hpp"
+#include "viewer_controls/panels/InkLabelPanel.hpp"
+#include "elements/CollapsibleSettingsGroup.hpp"
 
 #include "vc/core/util/QuadSurface.hpp"
 #include "vc/core/util/RenderCanvas.hpp"
 #include "vc/core/util/Tiff.hpp"
 
+#include <QApplication>
+#include <QCheckBox>
 #include <QFile>
 #include <QJsonDocument>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
+#include <QShortcut>
+#include <QSlider>
+#include <QAction>
 #include <QTemporaryDir>
+#include <QThreadPool>
+#include <QTimer>
 #include <QtConcurrent/QtConcurrent>
 #include <QtTest/QtTest>
 
@@ -131,6 +147,67 @@ SaveRequest saveRequest(const TileRaster& raster, const StorePaths& paths, const
     return req;
 }
 
+// The controller with stand-ins for the main window: a shortcut host that
+// records the key presses it receives, and recorded status messages.
+class KeyProbe : public QWidget
+{
+public:
+    QList<QKeySequence> seen;
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        seen.append(QKeySequence(event->keyCombination()));
+        QWidget::keyPressEvent(event);
+    }
+};
+
+struct Labeler {
+    KeyProbe host;
+    QStringList messages;
+    bool otherTool = false;
+    bool editing = false;
+    bool workspace = true;
+    QString modeLine;
+    int approvalStops = 0;
+    std::unique_ptr<InkLabelController> labels;
+
+    Labeler()
+    {
+        InkLabelController::Deps deps;
+        deps.shortcutHost = &host;
+        deps.status = [this](const QString& text, int) { messages << text; };
+        deps.otherSurfaceToolActive = [this] { return otherTool || editing; };
+        deps.segmentationEditing = [this] { return editing; };
+        deps.stopApprovalPainting = [this] { ++approvalStops; };
+        deps.workspaceActive = [this] { return workspace; };
+        deps.modeLine = [this](const QString& text) { modeLine = text; };
+        labels = std::make_unique<InkLabelController>(deps);
+    }
+    // Closing checkpoints unsaved edits on a worker; let it land before the
+    // test's temporary folder is removed.
+    ~Labeler()
+    {
+        labels.reset();
+        QThreadPool::globalInstance()->waitForDone();
+    }
+};
+
+vc::RenderCanvas testCanvas(cv::Size canvas)
+{
+    return vc::RenderCanvas::make({canvas.width / 20, canvas.height / 20}, {0.05f, 0.05f}, 1.0);
+}
+
+// Waits until the store's write has finished and its watcher has run.
+void settleWrites(InkLabelController& labels, const StorePaths& paths)
+{
+    const QString key = QString::fromStdString(paths.dir.string());
+    QFuture<SaveOutcome> future = labels.inFlightForTesting(key);
+    if (future.isValid())
+        future.waitForFinished();
+    QTRY_VERIFY(!labels.inFlightForTesting(key).isValid());
+}
+
 }  // namespace
 
 class TestInkLabels : public QObject
@@ -154,6 +231,25 @@ private slots:
     void saveProtocolDetectsOutsideEdits();
     void autosaveTargetLeavesTrainerFiles();
     void workerSaveReadsSnapshot();
+    void secondOpenIsReadOnly();
+    void keysCollideWithNothing();
+    void controllerSaveAndReopen();
+    void undoKeyBeatsPanelFocus();
+    void shortcutsFollowLabelMode();
+    void keysWorkOutsideTheWorkspaceWidget();
+    void polygonKeysAreShortcutsOnlyWhileOpen();
+    void autosaveBeforeUndoIsNotRestored();
+    void nestedOpenRefusedDuringRestorePrompt();
+    void openWritesNothingUntilFirstEdit();
+    void unusableAutosaveIsMovedAside();
+    void labelRootLeavesTheRemoteCache();
+    void segmentSwitchKeepsAutosave();
+    void recoverPolicies();
+    void closeGuardSavesThenCloses();
+    void otherToolTakesThePress();
+    void displayTilesPoolExactly();
+    void displayTilesMeetOnDevicePixels();
+    void panelDrivesController();
 };
 
 void TestInkLabels::paintOpTable()
@@ -776,5 +872,809 @@ void TestInkLabels::workerSaveReadsSnapshot()
     QVERIFY(sameImage(fullImage(back.raster), expected));
 }
 
-QTEST_GUILESS_MAIN(TestInkLabels)
+void TestInkLabels::secondOpenIsReadOnly()
+{
+    QTemporaryDir dir;
+    Labeler first, second;
+    const auto canvas = testCanvas({600, 400});
+    QVERIFY(first.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    QVERIFY(!first.labels->session()->readOnly);
+
+    // The first edit creates the folder and takes the QLockFile.
+    QVERIFY(first.labels->applyShape(disc(300, 200, 20), Actor::User) > 0);
+    QVERIFY(fs::exists(first.labels->session()->paths.lock()));
+
+    // The QLockFile is held: a second VC3D opens read-only and cannot paint.
+    const auto out = second.labels->openForTesting(canvas, toPath(dir), "seg");
+    QVERIFY(out.ok);
+    QVERIFY(out.readOnly);
+    QVERIFY(second.labels->session()->lockReason.contains(QStringLiteral("another VC3D")));
+    QCOMPARE(second.labels->applyShape(disc(100, 100, 20), Actor::User), uint64_t(0));
+    QVERIFY(!second.labels->beginStroke({50, 50}, false, Actor::User));
+    QVERIFY(second.labels->save().result().error.contains(QStringLiteral("another VC3D")));
+
+    // Refusing read-only reports the holder instead.
+    Labeler third;
+    InkLabelController::OpenOptions strict;
+    strict.readOnlyIfLocked = false;
+    const auto refused = third.labels->openForTesting(canvas, toPath(dir), "seg", strict);
+    QVERIFY(!refused.ok);
+    QCOMPARE(refused.error, InkLabelController::OpenError::LockedByOther);
+
+    // Two VC3Ds that opened a store before either painted: the first edit
+    // wins the lock and the other turns read-only at its first edit.
+    Labeler a, b;
+    QVERIFY(a.labels->openForTesting(canvas, toPath(dir), "fresh").ok);
+    QVERIFY(b.labels->openForTesting(canvas, toPath(dir), "fresh").ok);
+    QVERIFY(!b.labels->session()->readOnly);
+    QVERIFY(a.labels->applyShape(disc(100, 100, 20), Actor::User) > 0);
+    QCOMPARE(b.labels->applyShape(disc(100, 100, 20), Actor::User), uint64_t(0));
+    QVERIFY(b.labels->session()->readOnly);
+    QVERIFY(b.labels->session()->lockReason.contains(QStringLiteral("another VC3D")));
+}
+
+void TestInkLabels::keysCollideWithNothing()
+{
+    namespace kb = vc3d::keybinds;
+    const std::vector<const kb::ShortcutDef*> ink{&kb::shortcuts::InkLabelMode,
+                                                  &kb::shortcuts::InkLabelInk,
+                                                  &kb::shortcuts::InkLabelBackground,
+                                                  &kb::shortcuts::InkLabelValidation,
+                                                  &kb::shortcuts::InkLabelEraser,
+                                                  &kb::shortcuts::InkLabelTool,
+                                                  &kb::shortcuts::InkLabelShow,
+                                                  &kb::shortcuts::InkLabelUndo,
+                                                  &kb::shortcuts::InkLabelRedo,
+                                                  &kb::shortcuts::InkLabelSave};
+    const std::vector<const kb::ShortcutDef*> shortcuts{&kb::shortcuts::OpenVolpkg,
+                                                        &kb::shortcuts::AxisAlignedSlices,
+                                                        &kb::shortcuts::SurfaceNormals,
+                                                        &kb::shortcuts::DirectionHints,
+                                                        &kb::shortcuts::CompositeView,
+                                                        &kb::shortcuts::RawPointsOverlay,
+                                                        &kb::shortcuts::ZoomIn,
+                                                        &kb::shortcuts::ZoomOut,
+                                                        &kb::shortcuts::ResetView,
+                                                        &kb::shortcuts::ZoomToFit,
+                                                        &kb::shortcuts::WorldOffsetZPos,
+                                                        &kb::shortcuts::WorldOffsetZNeg,
+                                                        &kb::shortcuts::CycleNextSegment,
+                                                        &kb::shortcuts::CyclePrevSegment,
+                                                        &kb::shortcuts::ApplyApprovedTag,
+                                                        &kb::shortcuts::ApplyDefectiveTag,
+                                                        &kb::shortcuts::FocusedView,
+                                                        &kb::shortcuts::CycleViewers};
+    const std::vector<const kb::KeyPressDef*> keypresses{
+        &kb::keypress::ToggleVolumeOverlay, &kb::keypress::CenterFocusOnCursor, &kb::keypress::RecenterFocus,
+        &kb::keypress::SliceStepDecrease,   &kb::keypress::SliceStepIncrease,   &kb::keypress::ApprovalPaintToggle,
+        &kb::keypress::UnapprovalPaintToggle, &kb::keypress::ApprovalUndo,      &kb::keypress::SegmentationUndo,
+        &kb::keypress::ManualAddToggle,     &kb::keypress::LineDrawHold,        &kb::keypress::GrowSegmentation,
+        &kb::keypress::CancelOperation,     &kb::keypress::PushPullIn,          &kb::keypress::PushPullOut,
+        &kb::keypress::PushPullInAlpha,     &kb::keypress::PushPullOutAlpha,    &kb::keypress::PushPullRadiusDown,
+        &kb::keypress::PushPullRadiusUp,    &kb::keypress::EnableEditing,       &kb::keypress::ToggleAnnotation,
+        &kb::keypress::GrowthLeft,          &kb::keypress::GrowthUp,            &kb::keypress::GrowthDown,
+        &kb::keypress::GrowthRight,         &kb::keypress::GrowthAll,           &kb::keypress::GrowthStepAll,
+        &kb::keypress::GrowthFill,          &kb::keypress::DeletePoint,         &kb::range_slider::StepDownLeft,
+        &kb::range_slider::StepDownDown,    &kb::range_slider::StepUpRight,     &kb::range_slider::StepUpUp,
+        &kb::range_slider::PageDown,        &kb::range_slider::PageUp};
+
+    // Keys bound outside Keybinds.hpp: Lasagna (Ctrl+L, Ctrl+Shift+L), fiber
+    // annotation (J), same-wrap annotation (Shift+E) and the "Hold G" help.
+    std::vector<std::pair<QKeySequence, QString>> taken{{QKeySequence(QStringLiteral("Ctrl+L")), QStringLiteral("lasagna")},
+                                                        {QKeySequence(QStringLiteral("Ctrl+Shift+L")), QStringLiteral("lasagna repeat")},
+                                                        {QKeySequence(QStringLiteral("J")), QStringLiteral("fiber annotation")},
+                                                        {QKeySequence(QStringLiteral("Shift+E")), QStringLiteral("same wrap")},
+                                                        {QKeySequence(QStringLiteral("G")), QStringLiteral("hold G")}};
+    for (const auto* def : shortcuts)
+        for (const QKeySequence& seq : kb::sequencesFor(*def))
+            taken.emplace_back(seq, QString::fromUtf8(def->id));
+    for (const auto* def : keypresses)
+        taken.emplace_back(kb::sequenceFor(*def), QString::fromUtf8(def->id));
+
+    QSet<QString> mine;
+    for (const auto* def : ink) {
+        const QList<QKeySequence> seqs = kb::sequencesFor(*def);
+        QVERIFY2(!seqs.isEmpty() && !seqs.front().isEmpty(), def->id);
+        for (const QKeySequence& seq : seqs) {
+            QVERIFY2(!mine.contains(seq.toString()), qPrintable(seq.toString()));
+            mine.insert(seq.toString());
+            for (const auto& [other, owner] : taken) {
+                // The one documented override: Ctrl+Z undoes labels in label
+                // mode, where segmentation editing is always off.
+                if (def == &kb::shortcuts::InkLabelUndo && owner == QStringLiteral("segmentation_undo"))
+                    continue;
+                QVERIFY2(seq != other, qPrintable(QStringLiteral("%1 (%2) collides with %3").arg(seq.toString(), def->id, owner)));
+            }
+        }
+    }
+    QCOMPARE(kb::sequencesFor(kb::shortcuts::InkLabelUndo).front(), kb::sequenceFor(kb::keypress::SegmentationUndo));
+    QVERIFY(kb::buildKeybindsHelpText().contains(QStringLiteral("Ink Labels")));
+}
+
+void TestInkLabels::controllerSaveAndReopen()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({800, 600});
+    StorePaths paths;
+    std::array<uint64_t, 8> counts{};
+    std::map<LabelKind, std::string> sha;
+    {
+        Labeler l;
+        const auto out = l.labels->openForTesting(canvas, toPath(dir), "w045");
+        QVERIFY2(out.ok, qPrintable(out.message));
+        paths = l.labels->session()->paths;
+        QCOMPARE(QString::fromStdString(paths.dir.string()), QString::fromStdString((toPath(dir) / "ink_labels" / "w045").string()));
+        l.labels->setRadius(15);
+        l.labels->setPaintClass(PaintClass::Background);
+        QVERIFY(l.labels->applyShape(polygon({{100, 100}, {700, 100}, {700, 500}, {100, 500}}), Actor::User) > 0);
+        l.labels->setPaintClass(PaintClass::Ink);
+        QVERIFY(l.labels->beginStroke({150, 150}, false, Actor::User));
+        l.labels->extendStroke({400, 300});
+        l.labels->extendStroke({650, 200});
+        l.labels->endStroke();
+        QCOMPARE(int(l.labels->history()->undoDepth()), 2);
+        QVERIFY(l.labels->session()->dirty);
+
+        const SaveOutcome saved = l.labels->save().result();
+        QVERIFY2(saved.ok, qPrintable(saved.error));
+        QTRY_VERIFY(!l.labels->session()->dirty);
+        QVERIFY(l.labels->lastSave().has_value());
+        counts = l.labels->session()->counts;
+        sha = saved.sha256;
+        QCOMPARE(sha.size(), std::size_t(2));  // no validation painted
+        l.labels->closeSession();
+        settleWrites(*l.labels, paths);
+    }
+    QVERIFY(!targetExists(paths, Target::Autosave));
+
+    Labeler again;
+    const auto reopened = again.labels->openForTesting(canvas, toPath(dir), "w045");
+    QVERIFY2(reopened.ok, qPrintable(reopened.message));
+    QVERIFY(!reopened.readOnly);
+    QVERIFY(reopened.warnings.isEmpty());
+    QCOMPARE(again.labels->session()->counts, counts);
+    QVERIFY(!again.labels->session()->dirty);
+    QString error;
+    const auto sidecar = readSidecar(paths.sidecar(), &error);
+    QVERIFY(sidecar.has_value());
+    for (const auto& [kind, hash] : sha) {
+        QCOMPARE(sidecar->sha256.at(kind), hash);
+        QCOMPARE(fileSha256(paths.file(kind)), hash);
+    }
+    QCOMPARE(sidecar->edits.value("user").toObject().value("polygon").toInt(), 1);
+    QCOMPARE(sidecar->edits.value("user").toObject().value("brush").toInt(), 1);
+}
+
+void TestInkLabels::undoKeyBeatsPanelFocus()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    auto* button = new QPushButton(QStringLiteral("dock control"), &l.host);
+    l.host.resize(300, 200);
+    l.host.show();
+    QVERIFY(QTest::qWaitForWindowActive(&l.host));
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    l.labels->setLabelModeEnabled(true);
+    QVERIFY(l.labels->labelModeEnabled());
+    QVERIFY(l.labels->applyShape(disc(200, 200, 30), Actor::User) > 0);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+
+    button->setFocus();
+    QTRY_VERIFY(button->hasFocus());
+    QTest::keyClick(button, Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+    QCOMPARE(int(l.labels->history()->redoDepth()), 1);
+    QVERIFY(!l.host.seen.contains(QKeySequence(Qt::ControlModifier | Qt::Key_Z)));
+    QCOMPARE(l.labels->session()->counts[0], uint64_t(600) * 400);
+}
+
+void TestInkLabels::shortcutsFollowLabelMode()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    l.host.resize(300, 200);
+    // The host stands in for the main window; the keys are window shortcuts.
+    l.host.setFocusPolicy(Qt::StrongFocus);
+    l.host.show();
+    QVERIFY(QTest::qWaitForWindowActive(&l.host));
+    l.host.setFocus();
+    QTRY_VERIFY(l.host.hasFocus());
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    l.labels->setPaintClass(PaintClass::Background);
+    QVERIFY(!l.labels->labelModeEnabled());
+
+    // Label mode off: W is not ours.
+    QTest::keyClick(&l.host, Qt::Key_W);
+    QCOMPARE(l.labels->paintClass(), PaintClass::Background);
+    QVERIFY(l.host.seen.contains(QKeySequence(Qt::Key_W)));
+
+    // I turns label mode on (and approval painting off); W then picks ink.
+    QTest::keyClick(&l.host, Qt::Key_I);
+    QVERIFY(l.labels->labelModeEnabled());
+    QCOMPARE(l.approvalStops, 1);
+    // The first time, a hint lists the keys; the status bar keeps a mode line.
+    QVERIFY(l.messages.last().contains(QStringLiteral("W ink")));
+    QVERIFY(l.modeLine.startsWith(QStringLiteral("Ink labels: background")));
+    QVERIFY(l.labels->labelModeAction()->isChecked());
+    QTest::keyClick(&l.host, Qt::Key_W);
+    QCOMPARE(l.labels->paintClass(), PaintClass::Ink);
+    QTest::keyClick(&l.host, Qt::Key_Z);
+    QVERIFY(l.labels->erase());
+    QTest::keyClick(&l.host, Qt::Key_V);
+    QCOMPARE(l.labels->paintClass(), PaintClass::Validation);
+    QVERIFY(!l.labels->erase());
+    QTest::keyClick(&l.host, Qt::Key_L);
+    QCOMPARE(l.labels->tool(), InkLabelController::Tool::Polygon);
+    QTest::keyClick(&l.host, Qt::Key_H);
+    QVERIFY(!l.labels->showLabels());
+    QTest::keyClick(&l.host, Qt::Key_I);
+    QVERIFY(!l.labels->labelModeEnabled());
+    QVERIFY(l.modeLine.isEmpty());
+    QVERIFY(!l.labels->labelModeAction()->isChecked());
+    // H still works outside label mode while a session is open.
+    QTest::keyClick(&l.host, Qt::Key_H);
+    QVERIFY(l.labels->showLabels());
+    for (QShortcut* shortcut : l.labels->shortcutsForTesting()) {
+        QVERIFY(!shortcut->autoRepeat());
+        QCOMPARE(shortcut->context(), Qt::WindowShortcut);
+    }
+
+    // Another workspace is current: none of the keys are ours, so its own
+    // bindings of the same letters keep working.
+    l.workspace = false;
+    l.labels->updateShortcutStates();
+    QTest::keyClick(&l.host, Qt::Key_I);
+    QVERIFY(!l.labels->labelModeEnabled());
+    QVERIFY(l.host.seen.contains(QKeySequence(Qt::Key_I)));
+    l.workspace = true;
+    l.labels->updateShortcutStates();
+
+    // The menu action toggles label mode too, and shows a refusal.
+    l.labels->labelModeAction()->trigger();
+    QVERIFY(l.labels->labelModeEnabled());
+    l.labels->labelModeAction()->trigger();
+    QVERIFY(!l.labels->labelModeEnabled());
+    l.editing = true;
+    const int stops = l.approvalStops;
+    l.labels->labelModeAction()->trigger();
+    QVERIFY(!l.labels->labelModeEnabled());
+    QVERIFY(!l.labels->labelModeAction()->isChecked());
+    // Refused before touching approval painting.
+    QCOMPARE(l.approvalStops, stops);
+}
+
+void TestInkLabels::keysWorkOutsideTheWorkspaceWidget()
+{
+    // In VC3D the label keys live on the main window; the dock bar and its
+    // popup and the status bar are siblings of the segment workspace. Focus
+    // in any of them must leave the keys working.
+    QTemporaryDir dir;
+    Labeler l;
+    auto* workspace = new QWidget(&l.host);
+    workspace->setObjectName(QStringLiteral("segmentWorkspace"));
+    auto* statusBarButton = new QPushButton(QStringLiteral("dock bar"), &l.host);
+    statusBarButton->move(0, 150);
+    l.host.resize(300, 200);
+    l.host.show();
+    QVERIFY(QTest::qWaitForWindowActive(&l.host));
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    statusBarButton->setFocus();
+    QTRY_VERIFY(statusBarButton->hasFocus());
+    QTest::keyClick(statusBarButton, Qt::Key_I);
+    QVERIFY(l.labels->labelModeEnabled());
+    QTest::keyClick(statusBarButton, Qt::Key_F);
+    QCOMPARE(l.labels->paintClass(), PaintClass::Background);
+    QTest::keyClick(statusBarButton, Qt::Key_W);
+    QCOMPARE(l.labels->paintClass(), PaintClass::Ink);
+    QVERIFY(l.labels->applyShape(disc(200, 200, 30), Actor::User) > 0);
+    QTest::keyClick(statusBarButton, Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+}
+
+void TestInkLabels::polygonKeysAreShortcutsOnlyWhileOpen()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    auto* button = new QPushButton(QStringLiteral("dock control"), &l.host);
+    l.host.resize(300, 200);
+    l.host.show();
+    QVERIFY(QTest::qWaitForWindowActive(&l.host));
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    l.labels->setLabelModeEnabled(true);
+    l.labels->setTool(InkLabelController::Tool::Polygon);
+    button->setFocus();
+    QTRY_VERIFY(button->hasFocus());
+
+    // No polygon: Enter and Esc are not taken from the focused widget.
+    QTest::keyClick(button, Qt::Key_Escape);
+    QVERIFY(l.host.seen.contains(QKeySequence(Qt::Key_Escape)));
+
+    for (const cv::Point2d p : {cv::Point2d(100, 100), cv::Point2d(300, 100), cv::Point2d(300, 300), cv::Point2d(50, 50)}) {
+        QVERIFY(l.labels->pressForTesting(p));
+        l.labels->releaseForTesting();
+    }
+    QCOMPARE(int(l.labels->openPolygon().size()), 4);
+    // With focus in a dock control, Backspace drops the last point and Enter
+    // closes the polygon.
+    QTest::keyClick(button, Qt::Key_Backspace);
+    QCOMPARE(int(l.labels->openPolygon().size()), 3);
+    QTest::keyClick(button, Qt::Key_Return);
+    QVERIFY(l.labels->openPolygon().empty());
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QCOMPARE(int(l.labels->raster()->at(250, 150)), 3);
+
+    // Esc cancels an open polygon.
+    QVERIFY(l.labels->pressForTesting({10, 10}));
+    l.labels->releaseForTesting();
+    QTest::keyClick(button, Qt::Key_Escape);
+    QVERIFY(l.labels->openPolygon().empty());
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+}
+
+void TestInkLabels::segmentSwitchKeepsAutosave()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    const auto canvas = testCanvas({1200, 900});
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "a").ok);
+    const StorePaths pathsA = l.labels->session()->paths;
+    QVERIFY(l.labels->applyShape(capsule({100, 100}, {1100, 800}, 40), Actor::User) > 0);
+    const auto counts = l.labels->session()->counts;
+
+    // Switching segment checkpoints the unsaved edits.
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "b").ok);
+    QVERIFY(l.messages.join('\n').contains(QStringLiteral("kept as autosave")));
+    // Switching straight back waits for that write, then restores it
+    // without asking (Fail would otherwise refuse).
+    InkLabelController::OpenOptions options;
+    options.recover = RecoverPolicy::Fail;
+    const auto back = l.labels->openForTesting(canvas, toPath(dir), "a", options);
+    QVERIFY2(back.ok, qPrintable(back.message));
+    QVERIFY(back.restoredAutosave);
+    QVERIFY(!back.readOnly);
+    QCOMPARE(l.labels->session()->counts, counts);
+    QVERIFY(l.labels->session()->dirty);
+    QVERIFY(!fs::exists(pathsA.file(LabelKind::Ink)));
+    QVERIFY(fs::exists(pathsA.file(LabelKind::Ink, Target::Autosave)));
+}
+
+void TestInkLabels::recoverPolicies()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({600, 400});
+    StorePaths paths;
+    std::array<uint64_t, 8> saved{}, edited{};
+    {
+        Labeler l;
+        QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+        paths = l.labels->session()->paths;
+        QVERIFY(l.labels->applyShape(disc(100, 100, 30), Actor::User) > 0);
+        QVERIFY(l.labels->save().result().ok);
+        QTRY_VERIFY(!l.labels->session()->dirty);
+        saved = l.labels->session()->counts;
+        QVERIFY(l.labels->applyShape(disc(400, 300, 50), Actor::User) > 0);
+        edited = l.labels->session()->counts;
+        // A periodic checkpoint, as after a crash.
+        l.labels->runAutosaveTickForTesting(true);
+        settleWrites(*l.labels, paths);
+        QVERIFY(targetExists(paths, Target::Autosave));
+        QVERIFY(!l.labels->lastAutosave().isNull());
+    }
+    // The destructor checkpointed nothing new; the earlier checkpoint stays.
+    QTRY_VERIFY(targetExists(paths, Target::Autosave));
+
+    InkLabelController::OpenOptions options;
+    {
+        Labeler l;
+        options.recover = RecoverPolicy::Fail;
+        const auto failed = l.labels->openForTesting(canvas, toPath(dir), "seg", options);
+        QVERIFY(!failed.ok);
+        QCOMPARE(failed.error, InkLabelController::OpenError::AutosavePending);
+        QVERIFY(!failed.autosaveAtUtc.isEmpty());
+        QVERIFY(l.labels->session() == nullptr);
+    }
+    {
+        Labeler l;
+        options.recover = RecoverPolicy::Restore;
+        const auto restored = l.labels->openForTesting(canvas, toPath(dir), "seg", options);
+        QVERIFY2(restored.ok, qPrintable(restored.message));
+        QVERIFY(restored.restoredAutosave);
+        QCOMPARE(l.labels->session()->counts, edited);
+        QVERIFY(l.labels->session()->dirty);
+        // Close without saving: the checkpoint is kept for next time.
+        l.labels->closeSession();
+        settleWrites(*l.labels, paths);
+    }
+    {
+        Labeler l;
+        options.recover = RecoverPolicy::Discard;
+        const auto discarded = l.labels->openForTesting(canvas, toPath(dir), "seg", options);
+        QVERIFY2(discarded.ok, qPrintable(discarded.message));
+        QVERIFY(!discarded.restoredAutosave);
+        QCOMPARE(l.labels->session()->counts, saved);
+        QVERIFY(!targetExists(paths, Target::Autosave));
+    }
+}
+
+void TestInkLabels::autosaveBeforeUndoIsNotRestored()
+{
+    // Paint three strokes, checkpoint, undo two and save: the checkpoint
+    // holds the undone strokes and has the larger state serial, but the save
+    // supersedes it, and a later open must not bring the strokes back.
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({600, 400});
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    const StorePaths paths = l.labels->session()->paths;
+    QVERIFY(l.labels->applyShape(disc(100, 100, 20), Actor::User) > 0);
+    const auto afterOne = l.labels->session()->counts;
+    QVERIFY(l.labels->applyShape(disc(300, 200, 20), Actor::User) > 0);
+    QVERIFY(l.labels->applyShape(disc(500, 300, 20), Actor::User) > 0);
+    l.labels->runAutosaveTickForTesting(true);
+    settleWrites(*l.labels, paths);
+    QVERIFY(targetExists(paths, Target::Autosave));
+    QVERIFY(l.labels->undo(Actor::User));
+    QVERIFY(l.labels->undo(Actor::User));
+    QCOMPARE(l.labels->session()->counts, afterOne);
+    QVERIFY(l.labels->save().result().ok);
+    settleWrites(*l.labels, paths);
+    QVERIFY(!targetExists(paths, Target::Autosave));
+
+    // Switch away and back, in the same run and in a new one.
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "other").ok);
+    InkLabelController::OpenOptions fail;
+    fail.recover = RecoverPolicy::Fail;
+    const auto back = l.labels->openForTesting(canvas, toPath(dir), "seg", fail);
+    QVERIFY2(back.ok, qPrintable(back.message));
+    QVERIFY(!back.restoredAutosave);
+    QVERIFY(!l.labels->session()->dirty);
+    QCOMPARE(l.labels->session()->counts, afterOne);
+    l.labels->closeSession();
+    settleWrites(*l.labels, paths);
+
+    Labeler fresh;
+    const auto reopened = fresh.labels->openForTesting(canvas, toPath(dir), "seg", fail);
+    QVERIFY2(reopened.ok, qPrintable(reopened.message));
+    QVERIFY(!reopened.restoredAutosave);
+    QCOMPARE(fresh.labels->session()->counts, afterOne);
+
+    // An undo back to the saved state leaves a checkpoint stale: closing the
+    // clean session deletes it, so it cannot come back either.
+    QVERIFY(fresh.labels->applyShape(disc(400, 100, 20), Actor::User) > 0);
+    fresh.labels->runAutosaveTickForTesting(true);
+    settleWrites(*fresh.labels, paths);
+    QVERIFY(targetExists(paths, Target::Autosave));
+    QVERIFY(fresh.labels->undo(Actor::User));
+    QVERIFY(!fresh.labels->session()->dirty);
+    fresh.labels->closeSession();
+    QVERIFY(!targetExists(paths, Target::Autosave));
+}
+
+void TestInkLabels::nestedOpenRefusedDuringRestorePrompt()
+{
+    QTemporaryDir dir;
+    const auto canvas = testCanvas({600, 400});
+    StorePaths paths;
+    {
+        Labeler l;
+        QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+        paths = l.labels->session()->paths;
+        QVERIFY(l.labels->applyShape(disc(100, 100, 30), Actor::User) > 0);
+        l.labels->runAutosaveTickForTesting(true);
+        settleWrites(*l.labels, paths);
+    }
+    QVERIFY(targetExists(paths, Target::Autosave));
+
+    // The restore question runs a nested event loop. An open that arrives
+    // meanwhile (a bridge call, a key) is refused instead of being replaced
+    // silently when the question is answered.
+    Labeler l;
+    l.host.show();
+    InkLabelController::OpenOutcome nested;
+    bool answered = false;
+    QTimer poll;
+    poll.setInterval(20);
+    QObject::connect(&poll, &QTimer::timeout, [&] {
+        auto* box = l.host.findChild<QMessageBox*>(QStringLiteral("inkLabelRecoverPrompt"));
+        if (!box || !box->isVisible() || answered)
+            return;
+        nested = l.labels->openForTesting(canvas, toPath(dir), "other");
+        for (QAbstractButton* button : box->buttons())
+            if (button->text() == QStringLiteral("Restore"))
+                button->click();
+        answered = true;
+    });
+    poll.start();
+    const auto outer = l.labels->openForTesting(canvas, toPath(dir), "seg");  // RecoverPolicy::Ask
+    poll.stop();
+    QVERIFY(answered);
+    QCOMPARE(nested.error, InkLabelController::OpenError::Busy);
+    QVERIFY2(outer.ok, qPrintable(outer.message));
+    QVERIFY(outer.restoredAutosave);
+    QCOMPARE(l.labels->session()->segment, std::string("seg"));
+}
+
+void TestInkLabels::openWritesNothingUntilFirstEdit()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    const StorePaths paths = l.labels->session()->paths;
+    l.labels->setLabelModeEnabled(true);
+    // Opening and turning label mode on create no folder and no lock file.
+    QVERIFY(!fs::exists(toPath(dir) / "ink_labels"));
+    QVERIFY(l.labels->applyShape(disc(100, 100, 20), Actor::User) > 0);
+    QVERIFY(fs::is_directory(paths.dir));
+    QVERIFY(fs::exists(paths.lock()));
+}
+
+void TestInkLabels::unusableAutosaveIsMovedAside()
+{
+    QTemporaryDir dir;
+    const StorePaths paths = storePathsFor(toPath(dir), "seg");
+    // A checkpoint written for another canvas (a re-render before the first
+    // save), and one whose sidecar is unreadable (a crash between renames).
+    TileRaster other({800, 600});
+    History history;
+    commitTo(other, history, disc(100, 100, 30), paintOp(PaintClass::Ink, false, false));
+    QVERIFY(saveLabels(saveRequest(other, paths, keyFor({800, 600}), Target::Autosave, 5)).ok);
+    {
+        Labeler l;
+        const auto out = l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg");
+        QVERIFY2(out.ok, qPrintable(out.message));
+        QVERIFY(!out.restoredAutosave);
+        QVERIFY(out.warnings.join(' ').contains(QStringLiteral("cannot be restored")));
+        QVERIFY(!targetExists(paths, Target::Autosave));
+        fs::path aside = paths.file(LabelKind::Ink, Target::Autosave);
+        aside += ".unusable";
+        QVERIFY(fs::exists(aside));
+        QCOMPARE(l.labels->session()->counts[0], uint64_t(600) * 400);
+    }
+    QVERIFY(saveLabels(saveRequest(other, paths, keyFor({800, 600}), Target::Autosave, 6)).ok);
+    {
+        std::ofstream broken(paths.sidecar(Target::Autosave));
+        broken << "{ not json";
+    }
+    Labeler l;
+    const auto out = l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg");
+    QVERIFY2(out.ok, qPrintable(out.message));
+    QVERIFY(out.warnings.join(' ').contains(QStringLiteral("cannot be restored")));
+    fs::path aside = paths.sidecar(Target::Autosave);
+    aside += ".unusable";
+    QVERIFY(fs::exists(aside));
+}
+
+void TestInkLabels::labelRootLeavesTheRemoteCache()
+{
+    QCOMPARE(labelRootFor("/data/proj/p.volpkg.json", "/cache", "/appdata"), fs::path("/data/proj"));
+    QCOMPARE(labelRootFor("/cache/open_data/projects/PHerc0139.volpkg.json", "/cache", "/appdata"), fs::path("/appdata/PHerc0139"));
+    QCOMPARE(labelRootFor("/cache/open_data/projects/x.volpkg.json", "/cache/", "/appdata"), fs::path("/appdata/x"));
+    QCOMPARE(labelRootFor("/cachefoo/p.volpkg.json", "/cache", "/appdata"), fs::path("/cachefoo"));
+    QCOMPARE(labelRootFor("/data/p.volpkg.json", "", "/appdata"), fs::path("/data"));
+}
+
+void TestInkLabels::closeGuardSavesThenCloses()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    l.host.show();
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    bool retried = false;
+    QVERIFY(l.labels->readyToClose([&retried] { retried = true; }));  // clean: closes at once
+    QVERIFY(l.labels->applyShape(disc(300, 200, 40), Actor::User) > 0);
+
+    QVERIFY(!l.labels->readyToClose([&retried] { retried = true; }));
+    auto* box = l.host.findChild<QMessageBox*>(QStringLiteral("inkLabelCloseGuard"));
+    QVERIFY(box);
+    QTRY_VERIFY(box->isVisible());
+    box->button(QMessageBox::Save)->click();
+    QTRY_VERIFY(retried);
+    QVERIFY(!l.labels->session()->dirty);
+    QVERIFY(fs::exists(l.labels->session()->paths.file(LabelKind::Ink)));
+    // The callback's close() comes back here and passes.
+    QVERIFY(l.labels->readyToClose([] {}));
+
+    // Discard lets exactly one close through: if another guard cancels that
+    // close, new edits are asked about again.
+    QVERIFY(l.labels->applyShape(disc(100, 100, 40), Actor::User) > 0);
+    retried = false;
+    QVERIFY(!l.labels->readyToClose([&retried] { retried = true; }));
+    box = l.host.findChild<QMessageBox*>(QStringLiteral("inkLabelCloseGuard"));
+    QVERIFY(box);
+    QTRY_VERIFY(box->isVisible());
+    box->button(QMessageBox::Discard)->click();
+    QTRY_VERIFY(retried);
+    QVERIFY(l.labels->readyToClose([] {}));
+    QVERIFY(l.labels->applyShape(disc(500, 300, 40), Actor::User) > 0);
+    QVERIFY(!l.labels->readyToClose([] {}));
+    QTRY_VERIFY(l.host.findChild<QMessageBox*>(QStringLiteral("inkLabelCloseGuard")));
+    for (auto* open : l.host.findChildren<QMessageBox*>(QStringLiteral("inkLabelCloseGuard")))
+        open->reject();
+}
+
+void TestInkLabels::otherToolTakesThePress()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    l.labels->setLabelModeEnabled(true);
+    QVERIFY(l.labels->pressForTesting({100, 100}));
+    l.labels->releaseForTesting();
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+
+    // Editing or approval painting was turned on elsewhere: the press is
+    // passed on and label mode turns off.
+    l.otherTool = true;
+    QVERIFY(!l.labels->pressForTesting({200, 200}));
+    QVERIFY(!l.labels->labelModeEnabled());
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    // Approval painting is turned off when label mode turns on.
+    const int stops = l.approvalStops;
+    l.otherTool = false;
+    l.labels->setLabelModeEnabled(true);
+    QVERIFY(l.labels->labelModeEnabled());
+    QCOMPARE(l.approvalStops, stops + 1);
+    l.labels->setLabelModeEnabled(false);
+    // Segmentation editing refuses label mode before anything else changes.
+    l.editing = true;
+    l.labels->setLabelModeEnabled(true);
+    QVERIFY(!l.labels->labelModeEnabled());
+    QCOMPARE(l.approvalStops, stops + 1);
+    QVERIFY(l.messages.join('\n').contains(QStringLiteral("Turn off segmentation editing")));
+}
+
+void TestInkLabels::displayTilesPoolExactly()
+{
+    // The cache keeps at least twice the visible tiles (a 4K view needs
+    // about 600 at level 0).
+    QCOMPARE(InkLabelOverlayController::cacheCapacityFor(0), InkLabelOverlayController::kMinCachedTiles);
+    QCOMPARE(InkLabelOverlayController::cacheCapacityFor(100), InkLabelOverlayController::kMinCachedTiles);
+    QCOMPARE(InkLabelOverlayController::cacheCapacityFor(600), 1200);
+
+    QCOMPARE(InkLabelOverlayController::lodFor(4.0), 0);
+    QCOMPARE(InkLabelOverlayController::lodFor(1.0), 0);
+    QCOMPARE(InkLabelOverlayController::lodFor(0.51), 0);
+    QCOMPARE(InkLabelOverlayController::lodFor(0.5), 1);
+    QCOMPARE(InkLabelOverlayController::lodFor(0.26), 1);
+    QCOMPARE(InkLabelOverlayController::lodFor(0.125), 3);
+    QCOMPARE(InkLabelOverlayController::lodFor(1e-6), 8);
+    QCOMPARE(InkLabelOverlayController::lodFor(0.0), 0);
+
+    QTemporaryDir dir;
+    Labeler l;
+    const cv::Size size(700, 620);
+    QVERIFY(l.labels->openForTesting(testCanvas(size), toPath(dir), "seg").ok);
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<double> ux(0, size.width), uy(0, size.height), ur(1, 40);
+    l.labels->setPaintClass(PaintClass::Background);
+    l.labels->applyShape(polygon({{50, 30}, {690, 60}, {600, 600}, {20, 500}}), Actor::User);
+    for (int i = 0; i < 60; ++i) {
+        l.labels->setPaintClass(PaintClass(i % 3));
+        l.labels->setErase(i % 7 == 0);
+        l.labels->applyShape(disc(ux(rng), uy(rng), ur(rng)), Actor::User);
+    }
+    const cv::Mat_<uint8_t> values = fullImage(*l.labels->raster());
+    InkLabelOverlayController& overlay = *l.labels->overlay();
+    for (int level = 0; level <= 3; ++level) {
+        const int span = kTileSize << level, step = 1 << level;
+        for (int j = 0; j * span < size.height; ++j)
+            for (int i = 0; i * span < size.width; ++i) {
+                const QImage image = overlay.displayTileForTesting(level, i, j);
+                QCOMPARE(image.format(), QImage::Format_Indexed8);
+                QCOMPARE(image.width(), (std::min(span, size.width - i * span) + step - 1) / step);
+                QCOMPARE(image.height(), (std::min(span, size.height - j * span) + step - 1) / step);
+                for (int y = 0; y < image.height(); ++y)
+                    for (int x = 0; x < image.width(); ++x) {
+                        uint8_t code = kNeutralCode;
+                        for (int py = 0; py < step; ++py)
+                            for (int px = 0; px < step; ++px) {
+                                const int lx = i * span + x * step + px, ly = j * span + y * step + py;
+                                if (lx < size.width && ly < size.height)
+                                    code = poolCodes(code, summaryCode(values(ly, lx)));
+                            }
+                        if (image.pixelIndex(x, y) != code)
+                            QFAIL(qPrintable(QStringLiteral("level %1 tile (%2, %3) pixel (%4, %5): %6 != %7")
+                                                 .arg(level)
+                                                 .arg(i)
+                                                 .arg(j)
+                                                 .arg(x)
+                                                 .arg(y)
+                                                 .arg(image.pixelIndex(x, y))
+                                                 .arg(code)));
+                    }
+            }
+    }
+
+    // A style change swaps the palette only; a paint bumps every level.
+    const int builds = overlay.buildsForTesting();
+    const uint32_t rev = overlay.revisionForTesting(2, 0, 0);
+    l.labels->setDisplay(true, false, true, true, 0.3);
+    const QImage restyled = overlay.displayTileForTesting(2, 0, 0);
+    QCOMPARE(overlay.buildsForTesting(), builds);
+    QCOMPARE(overlay.revisionForTesting(2, 0, 0), rev);
+    QCOMPARE(restyled.colorTable(), InkLabelOverlayController::colorTableFor(false, true, true, 0.3));
+    QCOMPARE(qAlpha(restyled.colorTable()[0b1011]), 36);  // ink hidden: supervised blue at 120 * 0.3
+    std::array<uint32_t, InkLabelOverlayController::kLevels> before{};
+    for (int level = 0; level < InkLabelOverlayController::kLevels; ++level)
+        before[std::size_t(level)] = overlay.revisionForTesting(level, 0, 0);
+    // Toggle validation at (10, 10) so the paint surely changes pixels.
+    l.labels->setPaintClass(PaintClass::Validation);
+    l.labels->setErase((values(10, 10) & kValidation) != 0);
+    QVERIFY(l.labels->applyShape(disc(10, 10, 3), Actor::User) > 0);
+    for (int level = 0; level < InkLabelOverlayController::kLevels; ++level)
+        QVERIFY(overlay.revisionForTesting(level, 0, 0) > before[std::size_t(level)]);
+    (void)overlay.displayTileForTesting(2, 0, 0);
+    QCOMPARE(overlay.buildsForTesting(), builds + 1);
+}
+
+void TestInkLabels::displayTilesMeetOnDevicePixels()
+{
+    // A fractional zoom and offset, as at scale 0.22: neighboring tiles must
+    // end and start on the same whole device pixel, or a 1 px seam shows.
+    const QTransform toDevice = QTransform::fromTranslate(13.37, -7.25).scale(0.2213, 0.2213);
+    const qreal tileScene = 1024.0 * 1.0007;
+    const int pixels = 256;
+    for (int j = 0; j < 40; ++j) {
+        const QPointF top(-3001.3, 977.7 + j * tileScene);
+        const QPointF bottom(-3001.3, 977.7 + (j + 1) * tileScene);
+        const QPointF o = InkLabelOverlayController::snapToDevicePixel(top, toDevice);
+        const QPointF far = InkLabelOverlayController::snapToDevicePixel(bottom, toDevice);
+        const qreal scaleY = (far.y() - o.y()) / pixels;
+        // Where this tile's last image row ends, and where the next one begins.
+        const qreal end = toDevice.map(QPointF(o.x(), o.y() + pixels * scaleY)).y();
+        const qreal nextStart = toDevice.map(InkLabelOverlayController::snapToDevicePixel(bottom, toDevice)).y();
+        QVERIFY(std::abs(end - nextStart) < 1e-6);
+        QVERIFY(std::abs(nextStart - std::round(nextStart)) < 1e-6);
+        // Snapping moves a corner by at most half a device pixel.
+        QVERIFY(std::abs(toDevice.map(o).y() - toDevice.map(top).y()) <= 0.5 + 1e-9);
+    }
+    // A singular transform leaves the point alone.
+    QCOMPARE(InkLabelOverlayController::snapToDevicePixel({3.25, 4.5}, QTransform(0, 0, 0, 0, 0, 0)), QPointF(3.25, 4.5));
+}
+
+void TestInkLabels::panelDrivesController()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    InkLabelPanel panel(l.labels.get());
+    for (QWidget* w : panel.findChildren<QWidget*>()) {
+        if (qobject_cast<QPushButton*>(w) || qobject_cast<QCheckBox*>(w) || qobject_cast<QSlider*>(w))
+            QVERIFY2(w->focusPolicy() == Qt::NoFocus, qPrintable(w->objectName()));
+    }
+    QVERIFY(panel.findChild<CollapsibleSettingsGroup*>(QStringLiteral("inkLabelGroup")));
+    QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
+    auto* folder = panel.findChild<QLabel*>(QStringLiteral("inkLabelFolder"));
+    QVERIFY(folder->toolTip().endsWith(QStringLiteral("seg")));
+    const auto buttons = panel.findChildren<QPushButton*>();
+    const auto byText = [&buttons](const QString& prefix) -> QPushButton* {
+        for (auto* b : buttons)
+            if (b->text().startsWith(prefix))
+                return b;
+        return nullptr;
+    };
+    for (const QString& cls : {QStringLiteral("Ink"), QStringLiteral("Background"), QStringLiteral("Validation"), QStringLiteral("Eraser")})
+        QVERIFY2(!byText(cls)->icon().isNull(), qPrintable(cls));  // color swatches
+    byText(QStringLiteral("Background"))->click();
+    QCOMPARE(l.labels->paintClass(), PaintClass::Background);
+    byText(QStringLiteral("Eraser"))->click();
+    QVERIFY(l.labels->erase());
+    byText(QStringLiteral("Polygon"))->click();
+    QCOMPARE(l.labels->tool(), InkLabelController::Tool::Polygon);
+    auto* radius = panel.findChild<QSlider*>(QStringLiteral("inkLabelRadius"));
+    radius->setValue(radius->maximum());
+    QCOMPARE(l.labels->radius(), kMaxRadius);
+    l.labels->setRadius(16);
+    QCOMPARE(radius->value(), 500);  // 16 px, sqrt(0.5 * 512), sits mid-way on the log scale
+
+    l.labels->setErase(false);
+    l.labels->setPaintClass(PaintClass::Ink);
+    l.labels->applyShape(disc(100, 100, 10), Actor::User);
+    QTRY_VERIFY(panel.findChild<QLabel*>(QStringLiteral("inkLabelCounts"))->text().startsWith(QStringLiteral("ink 3")));
+    QCOMPARE(byText(QStringLiteral("Undo"))->text(), QStringLiteral("Undo (1)"));
+    byText(QStringLiteral("Undo"))->click();
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+    QVERIFY(panel.findChild<QLabel*>(QStringLiteral("inkLabelStatus"))->text().contains(QStringLiteral("no unsaved changes")));
+}
+
+QTEST_MAIN(TestInkLabels)
 #include "test_ink_labels.moc"

@@ -32,6 +32,7 @@
 #include "OpenDataNormalGrids.hpp"
 #include "viewer_controls/panels/ViewerCompositePanel.hpp"
 #include "viewer_controls/panels/ViewerInkDetectionPanel.hpp"
+#include "ink_labels/InkLabelController.hpp"
 #include <QGridLayout>
 #include <QAction>
 #include <QVBoxLayout>
@@ -2881,6 +2882,39 @@ CWindow::CWindow(size_t cacheSizeGB, RenderBenchOptions benchOptions) :
     _inkDetectionOverlay = std::make_unique<InkDetectionOverlayController>(_state, this);
     _viewerManager->setInkDetectionOverlay(_inkDetectionOverlay.get());
 
+    // Shown in the status bar while ink label mode is on: class, tool, radius.
+    QPointer<QLabel> inkLabelModeLine = new QLabel(this);
+    inkLabelModeLine->setObjectName(QStringLiteral("inkLabelModeLine"));
+    inkLabelModeLine->setContentsMargins(8, 0, 8, 0);
+    inkLabelModeLine->hide();
+    statusBar()->addPermanentWidget(inkLabelModeLine);
+    _inkLabelController = std::make_unique<InkLabelController>(InkLabelController::Deps{
+        .state = _state,
+        .viewers = _viewerManager.get(),
+        .shortcutHost = this,
+        .status = [this](const QString& text, int ms) {
+            // The status bar is gone once teardown starts; a closing session may still report.
+            if (!_destroyingWindow) {
+                showStatusBarMessage(text, ms);
+            }
+        },
+        .otherSurfaceToolActive = [this] { return _segmentationModule && (_segmentationModule->editingEnabled()
+                                                                          || _segmentationModule->isEditingApprovalMask()); },
+        .segmentationEditing = [this] { return _segmentationModule && _segmentationModule->editingEnabled(); },
+        .stopApprovalPainting = [this] { if (_segmentationModule) { _segmentationModule->setEditApprovedMask(false);
+                                                                    _segmentationModule->setEditUnapprovedMask(false); } },
+        .workspaceActive = [this] { return _workspaceTabs && _workspaceTabs->currentWidget() == _segmentWorkspaceWindow; },
+        .modeLine = [this, inkLabelModeLine](const QString& text) {
+            if (_destroyingWindow || !inkLabelModeLine) {
+                return;
+            }
+            inkLabelModeLine->setText(text);
+            inkLabelModeLine->setVisible(!text.isEmpty());
+        }}, this);
+    // The label keys are window shortcuts, enabled only in the segment workspace.
+    connect(_workspaceTabs, &QTabWidget::currentChanged, _inkLabelController.get(),
+            [this]() { _inkLabelController->updateShortcutStates(); });
+
     _atlasControlOverlay = std::make_unique<AtlasControlPointsOverlayController>(this);
     _atlasControlOverlay->bindToViewerManager(_viewerManager.get());
 
@@ -3513,6 +3547,9 @@ void CWindow::populateDockToggleMenu(QMenu* menu) const
     addDock(menu, ui.dockWidgetViewerControls);
     addDock(menu, ui.dockWidgetOverlay);
     addDock(menu, _inkDetectionDock);
+    if (_inkLabelController) {
+        menu->addAction(_inkLabelController->labelModeAction());
+    }
     addDock(menu, _transformsDock);
     addDock(menu, ui.dockWidgetRenderSettings);
     addDock(menu, ui.dockWidgetComposite);
@@ -8281,7 +8318,7 @@ void CWindow::CreateWidgets(void)
     _inkDetectionDock = new QDockWidget(tr("Ink Detection"), this);
     _inkDetectionDock->setObjectName(QStringLiteral("dockWidgetInkDetection"));
     attachScrollAreaToDock(_inkDetectionDock,
-                           new ViewerInkDetectionPanel(_viewerManager.get(), _inkDetectionDock),
+                           new ViewerInkDetectionPanel(_viewerManager.get(), _inkLabelController.get(), _inkDetectionDock),
                            QStringLiteral("dockWidgetInkDetectionContent"));
 
     _transformsDock = new QDockWidget(tr("Transforms"), this);
@@ -8721,6 +8758,10 @@ void CWindow::saveWindowState()
 
 void CWindow::closeEvent(QCloseEvent* event)
 {
+    if (_inkLabelController && !_inkLabelController->readyToClose([this] { close(); })) {
+        event->ignore();
+        return;
+    }
     if (_spiralWorkspace && !_spiralCloseGuardBypass
         && _spiralWorkspace->hasPendingBrushWork()) {
         event->ignore();

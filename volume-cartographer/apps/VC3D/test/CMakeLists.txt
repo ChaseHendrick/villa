@@ -661,18 +661,44 @@ vc_register_test_target(test_spiral_brush_patch)
 vc_register_ctest(spiral_brush_patch test_spiral_brush_patch)
 set_tests_properties(spiral_brush_patch PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+# Ink labels: the GUI-free raster and store, and the controller, overlay and
+# panel against a stub ViewerManager (as core/test's ink detection test does).
 add_executable(test_ink_labels
     test_ink_labels.cpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelRaster.cpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelRaster.hpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.cpp
-    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.hpp)
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelController.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelController.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/overlays/InkLabelOverlayController.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/overlays/InkLabelOverlayController.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/viewer_controls/panels/InkLabelPanel.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/viewer_controls/panels/InkLabelPanel.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/overlays/ViewerOverlayControllerBase.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/overlays/ViewerOverlayControllerBase.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/CState.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/CState.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/Keybinds.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/SpiralBrushCursorWidget.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/SpiralBrushCursorWidget.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ViewerManager.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/elements/COutlinedTextItem.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/elements/CollapsibleSettingsGroup.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/elements/CollapsibleSettingsGroup.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/elements/LabeledControlRow.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/elements/LabeledControlRow.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.hpp
+    ${PROJECT_SOURCE_DIR}/core/src/VCCollection.cpp
+    ${PROJECT_SOURCE_DIR}/core/include/vc/ui/VCCollection.hpp
+    ${PROJECT_SOURCE_DIR}/core/test/test_viewer_manager_stub.cpp)
 set_target_properties(test_ink_labels PROPERTIES AUTOMOC ON AUTOUIC OFF AUTORCC OFF)
 target_include_directories(test_ink_labels PRIVATE ${PROJECT_SOURCE_DIR}/apps/VC3D)
 target_compile_definitions(test_ink_labels PRIVATE VC_TESTING)
 target_link_libraries(test_ink_labels PRIVATE
     vc_core opencv_core opencv_imgproc opencv_imgcodecs TIFF::TIFF
-    Qt6::Core Qt6::Concurrent Qt6::Test)
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test)
 add_test(NAME ink_labels COMMAND test_ink_labels)
 vc_register_test_target(test_ink_labels)
 vc_register_ctest(ink_labels test_ink_labels)

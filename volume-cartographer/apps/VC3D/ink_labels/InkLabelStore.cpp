@@ -378,6 +378,28 @@ StorePaths storePathsFor(const fs::path& projectDir, const std::string& segmentN
 // Sidecar
 // ---------------------------------------------------------------------------
 
+fs::path labelRootFor(const fs::path& projectFile, const fs::path& cacheRoot, const fs::path& dataRoot)
+{
+    const fs::path projectDir = projectFile.parent_path();
+    if (cacheRoot.empty())
+        return projectDir;
+    std::error_code ec;
+    const fs::path dir = fs::weakly_canonical(projectDir, ec).lexically_normal();
+    const fs::path cache = fs::weakly_canonical(cacheRoot, ec).lexically_normal();
+    auto d = dir.begin();
+    for (auto c = cache.begin(); c != cache.end(); ++c, ++d) {
+        if (c->empty())
+            continue;  // a trailing separator
+        if (d == dir.end() || *d != *c)
+            return projectDir;
+    }
+    std::string name = projectFile.filename().string();
+    for (const char* suffix : {".json", ".volpkg"})
+        if (name.size() > std::strlen(suffix) && name.compare(name.size() - std::strlen(suffix), std::string::npos, suffix) == 0)
+            name.resize(name.size() - std::strlen(suffix));
+    return dataRoot / name;
+}
+
 std::optional<Sidecar> readSidecar(const fs::path& path, QString* error)
 {
     const auto fail = [error](const QString& message) -> std::optional<Sidecar> {

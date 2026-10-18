@@ -71,6 +71,13 @@ struct StorePaths {
     [[nodiscard]] std::filesystem::path lock() const;
 };
 [[nodiscard]] StorePaths storePathsFor(const std::filesystem::path& projectDir, const std::string& segmentName);
+// The folder that holds ink_labels/ for a project file: the project's folder,
+// unless the project file lies inside `cacheRoot` (an open-data catalog
+// project, kept in the remote cache that can be wiped and that every sample
+// shares). Then it is <dataRoot>/<project file name without .volpkg.json>.
+[[nodiscard]] std::filesystem::path labelRootFor(const std::filesystem::path& projectFile,
+                                                 const std::filesystem::path& cacheRoot,
+                                                 const std::filesystem::path& dataRoot);
 
 struct Sidecar {
     CanvasKey canvas;
