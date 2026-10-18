@@ -90,3 +90,12 @@ manifest detach cannot remove it.
 Project load reconciliation is in-memory until the caller explicitly saves;
 opening a project does not rewrite it solely because runtime derived-volume
 objects were reconstructed.
+
+## Folders Next To The Project File
+
+Annotations that belong to one project live in folders named after the project
+file, next to it: fibers in `<project dir>/fibers/<project file>/` and regions
+in `<project dir>/regions/<project file>/` (one JSON file per region, see
+[`regions.md`](regions.md)). Because the folder name comes from the project file
+name, Save As or a rename starts with empty folders; copy the old ones to keep
+the annotations.

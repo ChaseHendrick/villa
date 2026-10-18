@@ -5,6 +5,11 @@
 #include <QDockWidget>
 #include <QString>
 
+class QCheckBox;
+class QComboBox;
+class QDoubleSpinBox;
+class QGroupBox;
+class QProgressBar;
 class QLabel;
 class QLineEdit;
 class QPushButton;
@@ -14,8 +19,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 class RegionController;
 
-// The Regions dock: the 3D Box and Edit tools, the project's regions and the
-// selected region's details.
+// The Regions dock: the 3D Box and Edit tools, the project's regions, the
+// selected region's details, its statistics and its crop export.
 class RegionPanel : public QDockWidget
 {
     Q_OBJECT
@@ -38,6 +43,13 @@ private:
     // Errors and lasting states only; success messages go to the status bar.
     void showError(const QString& message);
     QString selectedId() const;
+    void refreshMeasure();
+    void refreshLevels();
+    void refreshJobControls();
+    void refreshSavedStats();
+    void showStats(const vc3d::regions::Json& doc, bool stale);
+    void runStats(bool fullResolution);
+    void runExport();
 
     RegionController* _regions = nullptr;
     bool _populating = false;
@@ -59,4 +71,23 @@ private:
     QPushButton* _jump = nullptr;
     QPushButton* _focus = nullptr;
     QPushButton* _delete = nullptr;
+
+    QGroupBox* _measure = nullptr;
+    QComboBox* _volume = nullptr;
+    QComboBox* _statsLevel = nullptr;
+    QCheckBox* _thresholdOn = nullptr;
+    QDoubleSpinBox* _threshold = nullptr;
+    QPushButton* _runStats = nullptr;
+    QPushButton* _fullResolution = nullptr;
+    QLabel* _statsSummary = nullptr;
+    QLabel* _histogram = nullptr;
+    QPushButton* _copyJson = nullptr;
+    QLineEdit* _exportDir = nullptr;
+    QToolButton* _browseExport = nullptr;
+    QComboBox* _exportLevel = nullptr;
+    QPushButton* _runExport = nullptr;
+    QPushButton* _cancelJob = nullptr;
+    QProgressBar* _jobProgress = nullptr;
+    QLabel* _jobStatus = nullptr;
+    QString _statsJson;
 };

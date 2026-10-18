@@ -186,6 +186,10 @@ set(srcs
     overlays/RegionOverlayController.hpp
     RegionModel.cpp
     RegionModel.hpp
+    RegionStats.cpp
+    RegionStats.hpp
+    RegionExport.cpp
+    RegionExport.hpp
     RegionStore.cpp
     RegionStore.hpp
     RegionController.cpp

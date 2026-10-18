@@ -166,6 +166,15 @@ vc_add_test(NAME test_vc3d_regions
     LIBS doctest::doctest Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test vc_core vc_lasagna
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 
+# Region statistics and crop export on local zarr volumes (Qt-free).
+vc_add_test(NAME test_vc3d_region_stats
+    SOURCES test_vc3d_region_stats.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionModel.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionStats.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionExport.cpp
+    LIBS doctest::doctest vc_core vc_lasagna
+    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
+
 vc_add_test(NAME test_scale_bar_units
     SOURCES test_scale_bar_units.cpp
             ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.cpp

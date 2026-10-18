@@ -1,17 +1,23 @@
 #pragma once
 
 // Regions of interest in VC3D: owns the project's region files (through
-// RegionStore), the 3D Box and Edit tools in the slice views, and the region
-// actions (jump to, use as focus box).
+// RegionStore), the 3D Box and Edit tools in the slice views, the statistics
+// and crop-export jobs, and the region actions (jump to, use as focus box).
 
 #include "RegionModel.hpp"
+#include "RegionStats.hpp"
 #include "RegionStore.hpp"
 #include "volume_viewers/CChunkedVolumeViewer.hpp"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
+#include <QThreadPool>
 
+#include <array>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,6 +27,8 @@
 #include <vector>
 
 class CState;
+class QTimer;
+class Volume;
 class ViewerManager;
 class VolumeViewerBase;
 
@@ -59,7 +67,8 @@ public:
     // Fills id, author, created, color, name and frame when empty.
     Result create(vc3d::regions::Region draft);
     Result update(vc3d::regions::Region next, std::optional<std::uint64_t> expectedRevision);
-    // Moves the region file to the regions folder's .trash.
+    // Moves the region file (and its saved statistics) to the regions
+    // folder's .trash.
     Result remove(const QString& id, std::optional<std::uint64_t> expectedRevision);
 
     void setActive(const QString& id);
@@ -86,12 +95,79 @@ public:
     static std::optional<vc3d::regions::Plane> planeOf(VolumeViewerBase* viewer);
     static QString nextColor(std::size_t index);
 
+    // --- Statistics and crop export (one job at a time) ---
+
+    // A project volume a region can be measured on.
+    struct VolumeChoice {
+        QString id;
+        bool current = false;
+        vc3d::regions::FrameMap map;
+    };
+    // The loaded project volumes the region fits, the current volume first.
+    std::vector<VolumeChoice> compatibleVolumes(const QString& regionId) const;
+    QStringList compatibleVolumeIds(const QString& regionId) const;
+
+    struct LevelEstimate {
+        int level = 0;
+        std::uint64_t voxels = 0;
+        std::uint64_t bytes = 0;
+    };
+    // Voxel and byte counts of the region at every stored level of a volume
+    // (empty volume id: the current one), finest first, and the level Auto
+    // picks.
+    std::vector<LevelEstimate> levelEstimates(const QString& regionId, const QString& volumeId) const;
+    // The level Auto picks from those estimates: the finest within the
+    // statistics voxel budget, else the coarsest.
+    static int autoLevel(const std::vector<LevelEstimate>& estimates);
+    int autoLevel(const QString& regionId, const QString& volumeId) const { return autoLevel(levelEstimates(regionId, volumeId)); }
+
+    struct StatsJob {
+        QStringList ids;
+        QString volumeId;  // empty: the current volume
+        int level = -1;    // -1: Auto
+        std::optional<double> threshold;
+        std::vector<double> percentiles{0.5, 1, 5, 25, 50, 75, 95, 99, 99.5};
+    };
+    // Validates everything, then starts the job; the result arrives through
+    // jobFinished(). Refused with a typed code (NotFound, ReadOnly,
+    // Incompatible, Invalid with param, JobRunning, NoProject, NoVolume); a
+    // region with more than regions::kMaxReadBytes of voxels at the level is
+    // refused.
+    Result startStats(const StatsJob& job);
+    // Saves the region's voxels at `level` as a local zarr crop. An empty
+    // `outDir` uses the default folder under the regions folder.
+    Result startExport(const QString& id, const QString& volumeId, int level, const QString& outDir);
+    bool cancelJob();
+    bool jobRunning() const { return !_jobKind.isEmpty(); }
+    QString jobKind() const { return _jobKind; }
+    QString jobLabel() const { return _jobLabel; }
+
+    // Saved statistics of a region, one per volume and level, newest first.
+    struct SavedStats {
+        QString volumeId;
+        int level = 0;
+        bool stale = false;
+        QString path;
+        vc3d::regions::Json document;
+    };
+    std::vector<SavedStats> savedStats(const QString& regionId) const;
+    QString statsDirectory(const QString& regionId) const;
+
+    static constexpr const char* kStatsJobKind = "regions.stats";
+    static constexpr const char* kExportJobKind = "regions.export";
+
 signals:
     void regionsChanged();
     void activeRegionChanged(const QString& id);
     void toolChanged();
     void draftChanged();
     void statusMessage(const QString& text, int timeoutMs);
+    void jobStarted(const QString& kind, const QString& label, const QStringList& ids);
+    void jobProgress(const QString& kind, double fraction);
+    // `result` is {"stats": [stats documents], "outputPaths": [...]} for
+    // statistics and {"manifest": ..., "outputPaths": [...]} for an export.
+    void jobFinished(const QString& kind, bool success, const QString& message, const QJsonObject& result, const QStringList& outputPaths);
+    void savedStatsChanged(const QString& regionId);
 
 private:
     struct Drag {
@@ -133,6 +209,19 @@ private:
     bool outlineContains(VolumeViewerBase* viewer, const vc3d::regions::Box& box, const vc3d::regions::FrameMap& map, const vc3d::regions::Plane& plane, const QPointF& scenePos) const;
     void centerSlicesOn(const vc3d::regions::Box& box, const vc3d::regions::FrameMap& map, const Drag& drag);
 
+    struct ResolvedVolume {
+        std::shared_ptr<Volume> volume;
+        std::string id;
+        std::string location;
+        vc3d::annotation::AnnotationFrame frame;
+        std::string space;
+    };
+    std::optional<ResolvedVolume> resolveVolume(const QString& volumeId) const;
+    Result checkMeasurable(const QString& id, const ResolvedVolume& volume, vc3d::regions::FrameMap* map) const;
+    void beginJob(const QString& kind, const QString& label, const QStringList& ids);
+    void endJob();
+    void trashStats(const std::string& id);
+
     void attachViewer(VolumeViewerBase* viewer);
     void cancelGestures();
     void onProjectChanged();
@@ -162,4 +251,14 @@ private:
     std::optional<vc3d::regions::Box> _draftBox;
     std::vector<QPointer<CChunkedVolumeViewer>> _toolViewers;
     std::unordered_map<CChunkedVolumeViewer*, Qt::CursorShape> _cursors;
+
+    // The running job. Workers capture values only and report progress
+    // through the shared atomic, which _progressTimer polls on the GUI thread.
+    QThreadPool _jobPool;
+    QString _jobKind;
+    QString _jobLabel;
+    std::shared_ptr<std::atomic<bool>> _jobCancel;
+    std::shared_ptr<std::atomic<double>> _jobFraction;
+    double _lastReportedFraction = -1.0;
+    QTimer* _progressTimer = nullptr;
 };

@@ -2,16 +2,26 @@
 
 #include "RegionController.hpp"
 
+#include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
 #include <QColorDialog>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPixmap>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -22,6 +32,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace regions = vc3d::regions;
@@ -45,6 +56,51 @@ QIcon swatch(const QString& color)
 QString groupedCount(std::uint64_t count)
 {
     return QLocale().toString(static_cast<qulonglong>(count));
+}
+
+QString formatCount(std::uint64_t count)
+{
+    const double value = static_cast<double>(count);
+    if (value >= 1e9) {
+        return QStringLiteral("%1 G").arg(value / 1e9, 0, 'f', 2);
+    }
+    if (value >= 1e6) {
+        return QStringLiteral("%1 M").arg(value / 1e6, 0, 'f', 2);
+    }
+    if (value >= 1e4) {
+        return QStringLiteral("%1 k").arg(value / 1e3, 0, 'f', 1);
+    }
+    return QString::number(static_cast<qulonglong>(count));
+}
+
+QString formatBytes(std::uint64_t bytes)
+{
+    return QLocale().formattedDataSize(static_cast<qint64>(bytes), 1, QLocale::DataSizeTraditionalFormat);
+}
+
+// The 256-bin histogram as bars, log scale so sparse bins stay visible.
+QPixmap histogramPixmap(const vc3d::regions::Json& counts, const QColor& color)
+{
+    constexpr int kWidth = 256;
+    constexpr int kHeight = 64;
+    QImage image(kWidth, kHeight, QImage::Format_ARGB32_Premultiplied);
+    image.fill(QColor(24, 24, 24));
+    double top = 0.0;
+    for (const auto& c : counts) {
+        top = std::max(top, std::log1p(c.get<double>()));
+    }
+    if (top > 0.0) {
+        QPainter painter(&image);
+        painter.setPen(color);
+        for (int bin = 0; bin < kWidth && bin < static_cast<int>(counts.size()); ++bin) {
+            const double h = std::log1p(counts[bin].get<double>()) / top;
+            const int height = static_cast<int>(std::lround(h * (kHeight - 2)));
+            if (height > 0) {
+                painter.drawLine(bin, kHeight - 1, bin, kHeight - 1 - height);
+            }
+        }
+    }
+    return QPixmap::fromImage(image.scaled(kWidth, kHeight * 3 / 2));
 }
 
 QString joinTags(const std::vector<std::string>& tags)
@@ -163,6 +219,77 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
     form->addRow(QString(), _info);
     layout->addWidget(_details);
 
+    _measure = new QGroupBox(tr("Measure and export"), content);
+    auto* measure = new QFormLayout(_measure);
+    _volume = new QComboBox(_measure);
+    _volume->setToolTip(tr("Project volumes this region fits (the current volume first)"));
+    measure->addRow(tr("Volume"), _volume);
+    _statsLevel = new QComboBox(_measure);
+    _statsLevel->setToolTip(
+        tr("Pyramid level to read. Auto reads the finest level with at most 32 Mi voxels in the region; "
+           "level L voxel i is the sample at full-resolution point i * 2^L."));
+    measure->addRow(tr("Level"), _statsLevel);
+    auto* thresholdRow = new QHBoxLayout();
+    _thresholdOn = new QCheckBox(tr("Count above"), _measure);
+    _threshold = new QDoubleSpinBox(_measure);
+    _threshold->setRange(0.0, 65535.0);
+    _threshold->setDecimals(1);
+    _threshold->setValue(128.0);
+    _threshold->setEnabled(false);
+    thresholdRow->addWidget(_thresholdOn);
+    thresholdRow->addWidget(_threshold, 1);
+    measure->addRow(tr("Threshold"), thresholdRow);
+    auto* statsButtons = new QHBoxLayout();
+    _runStats = new QPushButton(tr("Measure"), _measure);
+    _runStats->setToolTip(tr("Count, min, max, mean, std, percentiles and a 256-bin histogram of the voxels inside the region"));
+    _fullResolution = new QPushButton(tr("Full resolution..."), _measure);
+    _fullResolution->setToolTip(tr("Measure at the finest stored level (shows the size first)"));
+    _copyJson = new QPushButton(tr("Copy JSON"), _measure);
+    _copyJson->setToolTip(tr("Copy the statistics document shown below"));
+    statsButtons->addWidget(_runStats);
+    statsButtons->addWidget(_fullResolution);
+    statsButtons->addWidget(_copyJson);
+    measure->addRow(statsButtons);
+    _statsSummary = new QLabel(_measure);
+    _statsSummary->setWordWrap(true);
+    _statsSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    measure->addRow(_statsSummary);
+    _histogram = new QLabel(_measure);
+    _histogram->setToolTip(tr("Histogram of the region's voxels, 256 bins (uint16: value >> 8), log scale"));
+    _histogram->hide();
+    measure->addRow(_histogram);
+
+    auto* exportRow = new QHBoxLayout();
+    _exportDir = new QLineEdit(_measure);
+    _exportDir->setPlaceholderText(tr("default: regions/<project>/exports/..."));
+    _exportDir->setToolTip(tr("An absent or empty folder for the crop (volume.zarr and manifest.json)"));
+    _browseExport = new QToolButton(_measure);
+    _browseExport->setText(QStringLiteral("..."));
+    exportRow->addWidget(_exportDir, 1);
+    exportRow->addWidget(_browseExport);
+    measure->addRow(tr("Export to"), exportRow);
+    auto* exportLevelRow = new QHBoxLayout();
+    _exportLevel = new QComboBox(_measure);
+    _runExport = new QPushButton(tr("Export crop"), _measure);
+    _runExport->setToolTip(tr("Save the region's voxels at this level as a local zarr volume with a manifest that places it in the scan"));
+    exportLevelRow->addWidget(_exportLevel, 1);
+    exportLevelRow->addWidget(_runExport);
+    measure->addRow(tr("Export level"), exportLevelRow);
+
+    auto* jobRow = new QHBoxLayout();
+    _jobProgress = new QProgressBar(_measure);
+    _jobProgress->setRange(0, 1000);
+    _jobProgress->setTextVisible(false);
+    _cancelJob = new QPushButton(tr("Cancel"), _measure);
+    jobRow->addWidget(_jobProgress, 1);
+    jobRow->addWidget(_cancelJob);
+    measure->addRow(jobRow);
+    _jobStatus = new QLabel(_measure);
+    _jobStatus->setWordWrap(true);
+    _jobStatus->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    measure->addRow(_jobStatus);
+    layout->addWidget(_measure);
+
     auto* scroll = new QScrollArea(this);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -238,14 +365,61 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
         refreshList();
         refreshDetails();
         refreshTools();
+        refreshMeasure();
     });
     connect(_regions, &RegionController::activeRegionChanged, this, [this](const QString&) {
         showError(QString());
         selectActiveInList();
         refreshDetails();
         refreshTools();
+        refreshMeasure();
     });
     connect(_regions, &RegionController::toolChanged, this, &RegionPanel::refreshTools);
+
+    connect(_volume, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (!_populating) {
+            refreshLevels();
+        }
+    });
+    connect(_thresholdOn, &QCheckBox::toggled, _threshold, &QWidget::setEnabled);
+    connect(_runStats, &QPushButton::clicked, this, [this]() { runStats(false); });
+    connect(_fullResolution, &QPushButton::clicked, this, [this]() { runStats(true); });
+    connect(_copyJson, &QPushButton::clicked, this, [this]() {
+        if (!_statsJson.isEmpty()) {
+            QApplication::clipboard()->setText(_statsJson);
+        }
+    });
+    connect(_browseExport, &QToolButton::clicked, this, [this]() {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Folder for the crop"), _exportDir->text());
+        if (!dir.isEmpty()) {
+            _exportDir->setText(dir);
+        }
+    });
+    connect(_runExport, &QPushButton::clicked, this, &RegionPanel::runExport);
+    connect(_cancelJob, &QPushButton::clicked, this, [this]() { _regions->cancelJob(); });
+    connect(_regions, &RegionController::jobStarted, this, [this](const QString&, const QString& label, const QStringList&) {
+        _jobProgress->setValue(0);
+        _jobStatus->setStyleSheet(QString());
+        _jobStatus->setText(label + QStringLiteral("..."));
+        refreshJobControls();
+    });
+    connect(_regions, &RegionController::jobProgress, this, [this](const QString&, double fraction) {
+        _jobProgress->setValue(static_cast<int>(std::lround(std::clamp(fraction, 0.0, 1.0) * 1000.0)));
+    });
+    connect(_regions, &RegionController::jobFinished, this, [this](const QString& kind, bool success, const QString& message, const QJsonObject&, const QStringList&) {
+        _jobProgress->setValue(0);
+        _jobStatus->setStyleSheet(success ? QString() : QStringLiteral("color: #d9534f;"));
+        _jobStatus->setText(message);
+        refreshJobControls();
+        if (kind == QLatin1String(RegionController::kStatsJobKind)) {
+            refreshSavedStats();
+        }
+    });
+    connect(_regions, &RegionController::savedStatsChanged, this, [this](const QString& id) {
+        if (id == _regions->activeId()) {
+            refreshSavedStats();
+        }
+    });
 
     refreshAll();
 }
@@ -263,6 +437,191 @@ void RegionPanel::refreshAll()
     refreshTools();
     refreshList();
     refreshDetails();
+    refreshMeasure();
+}
+
+void RegionPanel::refreshMeasure()
+{
+    if (!_regions) {
+        return;
+    }
+    const QString id = _regions->activeId();
+    const QString previous = _volume->currentData().toString();
+    _populating = true;
+    _volume->clear();
+    for (const auto& choice : _regions->compatibleVolumes(id)) {
+        _volume->addItem(choice.current ? tr("%1 (current)").arg(choice.id) : choice.id, choice.id);
+    }
+    const int keep = _volume->findData(previous);
+    if (keep >= 0) {
+        _volume->setCurrentIndex(keep);
+    }
+    _populating = false;
+    refreshLevels();
+    refreshSavedStats();
+}
+
+void RegionPanel::refreshLevels()
+{
+    if (!_regions) {
+        return;
+    }
+    const QString id = _regions->activeId();
+    const QString volumeId = _volume->currentData().toString();
+    const auto estimates = _regions->levelEstimates(id, volumeId);
+    const int autoLevel = RegionController::autoLevel(estimates);
+    const int previousStats = _statsLevel->currentData().isValid() ? _statsLevel->currentData().toInt() : -1;
+    const int previousExport = _exportLevel->currentData().isValid() ? _exportLevel->currentData().toInt() : autoLevel;
+    _populating = true;
+    _statsLevel->clear();
+    _exportLevel->clear();
+    if (!estimates.empty()) {
+        _statsLevel->addItem(tr("Auto (level %1)").arg(autoLevel), -1);
+    }
+    for (const auto& estimate : estimates) {
+        const QString text = tr("Level %1: %2 voxels, %3").arg(estimate.level).arg(formatCount(estimate.voxels), formatBytes(estimate.bytes));
+        _statsLevel->addItem(text, estimate.level);
+        _exportLevel->addItem(text, estimate.level);
+    }
+    if (const int i = _statsLevel->findData(previousStats); i >= 0) {
+        _statsLevel->setCurrentIndex(i);
+    }
+    if (const int i = _exportLevel->findData(previousExport); i >= 0) {
+        _exportLevel->setCurrentIndex(i);
+    } else if (const int j = _exportLevel->findData(autoLevel); j >= 0) {
+        _exportLevel->setCurrentIndex(j);
+    }
+    _populating = false;
+    refreshJobControls();
+}
+
+void RegionPanel::refreshJobControls()
+{
+    if (!_regions) {
+        return;
+    }
+    const regions::Loaded* loaded = _regions->find(_regions->activeId());
+    const bool measurable = loaded && !loaded->readOnly && _volume->count() > 0 && _statsLevel->count() > 0;
+    const bool running = _regions->jobRunning();
+    _measure->setEnabled(loaded != nullptr || running);
+    _runStats->setEnabled(measurable && !running);
+    _fullResolution->setEnabled(measurable && !running);
+    _runExport->setEnabled(measurable && !running && _exportLevel->count() > 0);
+    _cancelJob->setEnabled(running);
+    _jobProgress->setVisible(running);
+    _copyJson->setEnabled(!_statsJson.isEmpty());
+}
+
+void RegionPanel::refreshSavedStats()
+{
+    if (!_regions) {
+        return;
+    }
+    const auto saved = _regions->savedStats(_regions->activeId());
+    if (saved.empty()) {
+        _statsJson.clear();
+        _statsSummary->setText(_regions->find(_regions->activeId()) ? tr("Not measured yet.") : QString());
+        _histogram->hide();
+        refreshJobControls();
+        return;
+    }
+    showStats(saved.front().document, saved.front().stale);
+}
+
+void RegionPanel::showStats(const regions::Json& doc, bool stale)
+{
+    _statsJson = QString::fromStdString(doc.dump(2));
+    const auto number = [&doc](const char* key) { return doc.contains(key) && doc[key].is_number() ? doc[key].get<double>() : 0.0; };
+    QStringList lines;
+    const std::string volumeId = doc.contains("volume") && doc["volume"].is_object() ? doc["volume"].value("id", std::string()) : std::string();
+    lines << tr("<b>%1</b>, level %2%3")
+                 .arg(QString::fromStdString(volumeId).toHtmlEscaped())
+                 .arg(doc.value("level", 0))
+                 .arg(stale ? tr(" <span style='color:#d9534f'>(stale: the region changed since)</span>") : QString());
+    lines << tr("%1 voxels (%2 mm<sup>3</sup>), min %3, max %4")
+                 .arg(groupedCount(doc.value("count", std::uint64_t{0})))
+                 .arg(number("volume_mm3"), 0, 'g', 4)
+                 .arg(doc.value("min", 0))
+                 .arg(doc.value("max", 0));
+    lines << tr("mean %1, std %2").arg(number("mean"), 0, 'f', 3).arg(number("std"), 0, 'f', 3);
+    if (doc.contains("percentiles") && doc["percentiles"].is_array()) {
+        QStringList parts;
+        for (const auto& entry : doc["percentiles"]) {
+            parts << QStringLiteral("p%1 %2").arg(entry.value("p", 0.0)).arg(entry.value("value", 0));
+        }
+        lines << parts.join(QStringLiteral(", "));
+    }
+    if (doc.contains("threshold") && doc["threshold"].is_number()) {
+        lines << tr("above %1: %2 (%3%)")
+                     .arg(number("threshold"))
+                     .arg(groupedCount(doc.value("count_above", std::uint64_t{0})))
+                     .arg(number("fraction_above") * 100.0, 0, 'f', 3);
+    }
+    lines << tr("%1 chunks read (%2 fill), %3 s").arg(doc.value("chunks_read", 0)).arg(doc.value("fill_chunks", 0)).arg(number("seconds"), 0, 'f', 2);
+    _statsSummary->setText(lines.join(QStringLiteral("<br>")));
+    if (doc.contains("histogram") && doc["histogram"].contains("counts") && doc["histogram"]["counts"].is_array()) {
+        QColor color(255, 176, 0);
+        if (const regions::Loaded* loaded = _regions->find(_regions->activeId())) {
+            color = QColor(QString::fromStdString(loaded->region.color));
+        }
+        _histogram->setPixmap(histogramPixmap(doc["histogram"]["counts"], color));
+        _histogram->show();
+    } else {
+        _histogram->hide();
+    }
+    refreshJobControls();
+}
+
+void RegionPanel::runStats(bool fullResolution)
+{
+    if (!_regions) {
+        return;
+    }
+    const QString id = _regions->activeId();
+    const QString volumeId = _volume->currentData().toString();
+    RegionController::StatsJob job;
+    job.ids = {id};
+    job.volumeId = volumeId;
+    job.level = _statsLevel->currentData().isValid() ? _statsLevel->currentData().toInt() : -1;
+    if (fullResolution) {
+        const auto estimates = _regions->levelEstimates(id, volumeId);
+        if (estimates.empty()) {
+            return;
+        }
+        const auto& finest = estimates.front();
+        const auto answer = QMessageBox::question(
+            this,
+            tr("Measure at full resolution"),
+            tr("Level %1 has %2 voxels (%3) in this region. Reading them may take a while and evicts cached chunks. Measure?")
+                .arg(finest.level)
+                .arg(formatCount(finest.voxels), formatBytes(finest.bytes)));
+        if (answer != QMessageBox::Yes) {
+            return;
+        }
+        job.level = finest.level;
+    }
+    if (_thresholdOn->isChecked()) {
+        job.threshold = _threshold->value();
+    }
+    const auto result = _regions->startStats(job);
+    if (!result.ok()) {
+        _jobStatus->setStyleSheet(QStringLiteral("color: #d9534f;"));
+        _jobStatus->setText(result.message);
+    }
+}
+
+void RegionPanel::runExport()
+{
+    if (!_regions || !_exportLevel->currentData().isValid()) {
+        return;
+    }
+    const auto result =
+        _regions
+            ->startExport(_regions->activeId(), _volume->currentData().toString(), _exportLevel->currentData().toInt(), _exportDir->text().trimmed());
+    if (!result.ok()) {
+        _jobStatus->setStyleSheet(QStringLiteral("color: #d9534f;"));
+        _jobStatus->setText(result.message);
+    }
 }
 
 void RegionPanel::refreshTools()
