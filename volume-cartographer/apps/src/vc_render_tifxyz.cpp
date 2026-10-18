@@ -3,6 +3,7 @@
 #include "vc/core/util/Slicing.hpp"
 #include "vc/core/render/ZarrChunkFetcher.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/RenderCanvas.hpp"
 #include "vc/core/util/Surface.hpp"
 #include "vc/core/util/Tiff.hpp"
 #include "vc/core/util/Zarr.hpp"
@@ -279,8 +280,9 @@ static void rotateFlipIfNeeded(cv::Mat& m, int rotQuad, int flip_axis)
 
 static void computeCanvasOrigin(const cv::Size& size, float& u0, float& v0)
 {
-    u0 = -0.5f * (size.width  - 1.0f);
-    v0 = -0.5f * (size.height - 1.0f);
+    const cv::Vec2f o = vc::renderCanvasOrigin(size);
+    u0 = o[0];
+    v0 = o[1];
 }
 
 static void genTile(QuadSurface* surf, const cv::Size& size, float render_scale,
@@ -1841,11 +1843,7 @@ int main(int argc, char *argv[])
         }
         double render_scale = double(tgt_scale) * (double(scale_seg) * sA * double(ds_scale));
 
-        {
-            double sx = render_scale / surf->_scale[0], sy = render_scale / surf->_scale[1];
-            full_size.width  = std::max(1, int(std::lround(full_size.width  * sx)));
-            full_size.height = std::max(1, int(std::lround(full_size.height * sy)));
-        }
+        full_size = vc::renderCanvasSize(full_size, surf->_scale, render_scale);
 
         cv::Size tgt_size = full_size;
         cv::Rect crop = {0, 0, full_size.width, full_size.height};

@@ -13,11 +13,13 @@
 #include "vc/core/util/CubicInterpolation.hpp"
 #include "vc/core/util/Geometry.hpp"
 #include "vc/core/util/QuadSurface.hpp"
+#include "vc/core/util/RenderCanvas.hpp"
 
 #include <opencv2/core.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -104,17 +106,13 @@ struct GenResult {
     cv::Mat_<cv::Vec3f> normals;
 };
 
-// Canvas origin, as vc_render_tifxyz computes it (computeCanvasOrigin): centres
-// the output on the surface instead of starting at its middle.
-cv::Vec3f canvasOrigin(cv::Size size)
-{
-    return cv::Vec3f(-0.5f * (size.width - 1.0f), -0.5f * (size.height - 1.0f), 0.f);
-}
-
 GenResult genBoth(QuadSurface& s, cv::Size size, float scale)
 {
     GenResult g;
-    s.gen(&g.coords, &g.normals, size, cv::Vec3f(0, 0, 0), scale, canvasOrigin(size));
+    // The canvas origin vc_render_tifxyz passes: it centers the output on the
+    // surface instead of starting at its middle.
+    const cv::Vec2f origin = vc::renderCanvasOrigin(size);
+    s.gen(&g.coords, &g.normals, size, cv::Vec3f(0, 0, 0), scale, cv::Vec3f(origin[0], origin[1], 0.f));
     // gen() returns views into thread-local scratch that the next call reuses.
     g.coords = g.coords.clone();
     g.normals = g.normals.clone();
@@ -129,7 +127,7 @@ cv::Vec2d sourceCoordOf(const QuadSurface& s, cv::Size size, float scale, int dx
 {
     const cv::Vec2f gs = s.scale();
     const cv::Vec3f ctr = s.center();
-    const cv::Vec3f off = canvasOrigin(size);
+    const cv::Vec2f off = vc::renderCanvasOrigin(size);
     const double ulx = (double(off[0]) / double(scale) + double(ctr[0])) * double(gs[0]);
     const double uly = (double(off[1]) / double(scale) + double(ctr[1])) * double(gs[1]);
     return { ulx + double(dx) * (double(gs[0]) / double(scale)),
@@ -673,4 +671,126 @@ TEST_CASE("smooth mode is safe under concurrent gen() calls")
         checkMatsIdentical(ref.coords, out[i].coords);
         checkMatsIdentical(ref.normals, out[i].normals);
     }
+}
+
+// ---------------------------------------------------------------------------
+// vc::RenderCanvas: the pixel grid vc_render_tifxyz writes. VC3D draws ink
+// labels on this canvas, so its mapping must agree with gen() exactly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// x = column, y = row: gen() then returns the grid position it sampled.
+cv::Mat_<cv::Vec3f> makeIdentityGrid(int rows, int cols)
+{
+    cv::Mat_<cv::Vec3f> m(rows, cols);
+    for (int r = 0; r < rows; ++r)
+        for (int c = 0; c < cols; ++c)
+            m(r, c) = cv::Vec3f(float(c), float(r), 0.f);
+    return m;
+}
+
+}  // namespace
+
+TEST_CASE("renderCanvasSize matches vc_render_tifxyz's rounding")
+{
+    CHECK(vc::renderCanvasSize({152, 76}, {0.05f, 0.05f}, 1.0) == cv::Size(3040, 1520));
+    CHECK(vc::renderCanvasSize({7, 5}, {2.0f, 2.0f}, 1.0) == cv::Size(4, 3));
+    CHECK(vc::renderCanvasSize({1, 1}, {1000.f, 1000.f}, 1.0) == cv::Size(1, 1));
+    CHECK(vc::renderCanvasSize({152, 76}, {0.05f, 0.05f}, 0.5) == cv::Size(1520, 760));
+    CHECK(vc::renderCanvasSize({97, 97}, {0.3f, 0.3f}, 1.0) == cv::Size(323, 323));
+    // Independent axes.
+    CHECK(vc::renderCanvasSize({10, 20}, {0.5f, 0.25f}, 1.0) == cv::Size(20, 80));
+}
+
+TEST_CASE("renderCanvasOrigin is the renderer's centered origin, bit for bit")
+{
+    for (const cv::Size size : {cv::Size(1, 1), cv::Size(2, 3), cv::Size(3040, 1521), cv::Size(4097, 2048)}) {
+        const cv::Vec2f o = vc::renderCanvasOrigin(size);
+        const float u0 = -0.5f * (size.width - 1.0f);
+        const float v0 = -0.5f * (size.height - 1.0f);
+        CHECK(std::memcmp(&o[0], &u0, sizeof(float)) == 0);
+        CHECK(std::memcmp(&o[1], &v0, sizeof(float)) == 0);
+    }
+}
+
+TEST_CASE("RenderCanvas::canvasToGrid samples the same grid position as gen()")
+{
+    const int rows = 30, cols = 40;
+    for (const float s : {0.05f, 0.3f, 2.0f}) {
+        auto pts = makeIdentityGrid(rows, cols);
+        // Points stay the identity whatever the stored scale is.
+        QuadSurface surf(pts, cv::Vec2f(s, s));
+        for (const double rs : {1.0, 0.5}) {
+            const auto canvas = vc::RenderCanvas::make({cols, rows}, {s, s}, rs);
+            const cv::Size full = canvas.size;
+            const cv::Vec2f origin = vc::renderCanvasOrigin(full);
+            for (const cv::Point window : {cv::Point(0, 0), cv::Point(full.width / 3, full.height / 3)}) {
+                const cv::Size size(std::min(64, full.width - window.x), std::min(64, full.height - window.y));
+                cv::Mat_<cv::Vec3f> coords;
+                surf.gen(&coords, nullptr, size, cv::Vec3f(0, 0, 0), float(rs),
+                         cv::Vec3f(origin[0] + float(window.x), origin[1] + float(window.y), 0.f));
+                int compared = 0;
+                double worst = 0.0;
+                for (int r = 0; r < coords.rows; ++r)
+                    for (int c = 0; c < coords.cols; ++c) {
+                        const cv::Vec3f& sample = coords(r, c);
+                        if (!finiteVec(sample) || sample[0] == -1.f)
+                            continue;
+                        const cv::Vec2d g = canvas.canvasToGrid({window.x + c + 0.5, window.y + r + 0.5});
+                        // Pixel centers reach half a pixel past the last vertex;
+                        // gen() replicates the border there instead of
+                        // interpolating, so only the vertex span is compared.
+                        if (g[0] < 0.0 || g[0] > cols - 1.0 || g[1] < 0.0 || g[1] > rows - 1.0)
+                            continue;
+                        const cv::Vec2d pitch = canvas.pitch();
+                        worst = std::max(worst, std::abs(double(sample[0]) - g[0]) / pitch[0]);
+                        worst = std::max(worst, std::abs(double(sample[1]) - g[1]) / pitch[1]);
+                        ++compared;
+                    }
+                INFO("scale " << s << " rs " << rs << " window " << window.x << "," << window.y);
+                REQUIRE(compared > 0);
+                CHECK(worst <= 1e-3);
+            }
+        }
+    }
+}
+
+TEST_CASE("RenderCanvas::gridToCanvas inverts canvasToGrid")
+{
+    const auto canvas = vc::RenderCanvas::make({152, 76}, {0.05f, 0.3f}, 1.0);
+    for (const cv::Vec2d p : {cv::Vec2d(0, 0), cv::Vec2d(0.5, 0.5), cv::Vec2d(1234.25, 17.75), cv::Vec2d(3040, 253)}) {
+        const cv::Vec2d back = canvas.gridToCanvas(canvas.canvasToGrid(p));
+        CHECK(std::abs(back[0] - p[0]) <= 1e-9);
+        CHECK(std::abs(back[1] - p[1]) <= 1e-9);
+    }
+    CHECK(canvas == vc::RenderCanvas::make({152, 76}, {0.05f, 0.3f}, 1.0));
+    CHECK_FALSE(canvas == vc::RenderCanvas::make({152, 76}, {0.05f, 0.3f}, 0.5));
+}
+
+TEST_CASE("pixel centers map to the renderer's surface coordinates, whatever the origin shift")
+{
+    const float s = 0.25f;
+    const double rs = 1.0;
+    QuadSurface surf(makeIdentityGrid(20, 30), cv::Vec2f(s, s));
+    const auto canvas = vc::RenderCanvas::make({30, 20}, {s, s}, rs);
+    const int W = canvas.size.width, H = canvas.size.height;
+    for (const cv::Point px : {cv::Point(0, 0), cv::Point(7, 3), cv::Point(W - 1, H - 1)}) {
+        const cv::Vec2d grid = canvas.canvasToGrid({px.x + 0.5, px.y + 0.5});
+        const cv::Vec2d surface = surf.gridToSurface(grid);
+        CHECK(std::abs(surface[0] - (px.x - (W - 1) / 2.0) / rs) <= 1e-9);
+        CHECK(std::abs(surface[1] - (px.y - (H - 1) / 2.0) / rs) <= 1e-9);
+    }
+
+    // Labels attach to grid positions: shifting the surface origin moves the
+    // surface coordinates but not the grid position a label pixel maps to.
+    const cv::Vec2d grid = canvas.canvasToGrid({11.5, 4.5});
+    const cv::Vec2d before = surf.gridToSurface(grid);
+    surf.shiftSurfaceOrigin({3.0, -2.0});
+    const cv::Vec2d after = surf.gridToSurface(grid);
+    CHECK(std::abs(after[0] - (before[0] - 3.0)) <= 1e-5);
+    CHECK(std::abs(after[1] - (before[1] + 2.0)) <= 1e-5);
+    const cv::Vec2d roundTrip = surf.surfaceToGrid(after);
+    CHECK(std::abs(roundTrip[0] - grid[0]) <= 1e-5);
+    CHECK(std::abs(roundTrip[1] - grid[1]) <= 1e-5);
 }
