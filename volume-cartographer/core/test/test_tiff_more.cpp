@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <random>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -162,4 +163,164 @@ TEST_CASE("atomicImwriteMulti: writes multi-page TIFF atomically")
 TEST_CASE("voxelSizeToDpi: very tiny voxels produce large dpi")
 {
     CHECK(voxelSizeToDpi(0.01) == doctest::Approx(2540000.0f).epsilon(1e-3));
+}
+
+// ---------------------------------------------------------------------------
+// forEachTiffBlock: streaming block reader
+// ---------------------------------------------------------------------------
+
+namespace {
+
+cv::Mat patternImage(int width, int height, int type)
+{
+    cv::Mat img(height, width, type);
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x) {
+            const int v = (x * 7 + y * 13) & 0xFFFF;
+            if (CV_MAT_DEPTH(type) == CV_8U)
+                img.at<uint8_t>(y, x) = uint8_t(v & 0xFF);
+            else
+                img.at<uint16_t>(y, x) = uint16_t(v);
+        }
+    return img;
+}
+
+// A striped (untiled) single-channel TIFF with `rowsPerStrip` rows per strip.
+void writeStripedTiff(const fs::path& path, const cv::Mat& img, uint32_t rowsPerStrip)
+{
+    TIFF* tf = TIFFOpen(path.string().c_str(), "w");
+    REQUIRE(tf != nullptr);
+    const int bits = CV_MAT_DEPTH(img.type()) == CV_8U ? 8 : 16;
+    TIFFSetField(tf, TIFFTAG_IMAGEWIDTH, uint32_t(img.cols));
+    TIFFSetField(tf, TIFFTAG_IMAGELENGTH, uint32_t(img.rows));
+    TIFFSetField(tf, TIFFTAG_SAMPLESPERPIXEL, 1);
+    TIFFSetField(tf, TIFFTAG_BITSPERSAMPLE, bits);
+    TIFFSetField(tf, TIFFTAG_SAMPLEFORMAT, SAMPLEFORMAT_UINT);
+    TIFFSetField(tf, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+    TIFFSetField(tf, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+    TIFFSetField(tf, TIFFTAG_COMPRESSION, COMPRESSION_LZW);
+    TIFFSetField(tf, TIFFTAG_ROWSPERSTRIP, rowsPerStrip);
+    for (int y = 0; y < img.rows; ++y)
+        REQUIRE(TIFFWriteScanline(tf, const_cast<uchar*>(img.ptr(y)), uint32_t(y), 0) == 1);
+    TIFFClose(tf);
+}
+
+// Reassembles a file from its blocks and counts how often each pixel arrives.
+struct Reassembled {
+    TiffImageInfo info;
+    cv::Mat image;
+    cv::Mat_<uint8_t> visits;
+    int blocks = 0;
+    bool ok = false;
+    std::string error;
+};
+
+Reassembled reassemble(const fs::path& path)
+{
+    Reassembled out;
+    out.ok = forEachTiffBlock(
+        path,
+        [&out](const TiffImageInfo& info, cv::Point topLeft, const cv::Mat& block) {
+            if (out.image.empty()) {
+                out.info = info;
+                out.image = cv::Mat(int(info.height), int(info.width), block.type(), cv::Scalar::all(0));
+                out.visits = cv::Mat_<uint8_t>(int(info.height), int(info.width), uint8_t(0));
+            }
+            const cv::Rect rect(topLeft, block.size());
+            REQUIRE((rect & cv::Rect(0, 0, out.image.cols, out.image.rows)) == rect);
+            block.copyTo(out.image(rect));
+            out.visits(rect) += 1;
+            ++out.blocks;
+            return true;
+        },
+        &out.error);
+    return out;
+}
+
+}  // namespace
+
+TEST_CASE("forEachTiffBlock visits every pixel of a tiled file exactly once")
+{
+    auto d = tmpDir("blocks_tiled");
+    const cv::Mat img = patternImage(4097, 2049, CV_8UC1);
+    writeTiff(d / "tiled.tif", img, -1, 1024, 1024, 0.f, COMPRESSION_LZW);
+    const auto r = reassemble(d / "tiled.tif");
+    REQUIRE(r.ok);
+    CHECK(r.info.tiled);
+    CHECK(r.info.width == 4097);
+    CHECK(r.info.height == 2049);
+    CHECK(r.info.samplesPerPixel == 1);
+    CHECK(r.info.bitsPerSample == 8);
+    CHECK(r.blocks == 5 * 3);
+    CHECK(cv::countNonZero(r.visits != 1) == 0);
+    CHECK(cv::countNonZero(r.image != img) == 0);
+    fs::remove_all(d);
+}
+
+TEST_CASE("forEachTiffBlock streams striped 8 and 16 bit files, clipping the last strip")
+{
+    auto d = tmpDir("blocks_striped");
+    for (const int type : {CV_8UC1, CV_16UC1}) {
+        const cv::Mat img = patternImage(4097, 2049, type);
+        writeStripedTiff(d / "striped.tif", img, 100);
+        const auto r = reassemble(d / "striped.tif");
+        REQUIRE(r.ok);
+        CHECK_FALSE(r.info.tiled);
+        CHECK(r.blocks == 21);  // 20 full strips and one of 49 rows
+        CHECK(r.image.type() == type);
+        CHECK(cv::countNonZero(r.visits != 1) == 0);
+        cv::Mat diff;
+        cv::absdiff(r.image, img, diff);
+        CHECK(cv::countNonZero(diff.reshape(1)) == 0);
+    }
+    fs::remove_all(d);
+}
+
+TEST_CASE("forEachTiffBlock reports multi-sample layouts and refuses float data")
+{
+    auto d = tmpDir("blocks_layout");
+    cv::Mat rgb(37, 53, CV_8UC3, cv::Scalar(10, 20, 30));
+    REQUIRE(cv::imwrite((d / "rgb.tif").string(), rgb));
+    const auto r = reassemble(d / "rgb.tif");
+    REQUIRE(r.ok);
+    CHECK(r.info.samplesPerPixel == 3);
+    CHECK(r.image.type() == CV_8UC3);
+    CHECK(cv::countNonZero(r.visits != 1) == 0);
+
+    cv::Mat f(16, 16, CV_32FC1, cv::Scalar(0.5f));
+    writeTiff(d / "float.tif", f, -1, 16, 16);
+    std::string error;
+    int calls = 0;
+    CHECK_FALSE(forEachTiffBlock(d / "float.tif", [&calls](const TiffImageInfo&, cv::Point, const cv::Mat&) {
+        ++calls;
+        return true;
+    }, &error));
+    CHECK(calls == 0);
+    CHECK(error.find("sample format") != std::string::npos);
+    fs::remove_all(d);
+}
+
+TEST_CASE("forEachTiffBlock fails on a truncated file and stops when asked")
+{
+    auto d = tmpDir("blocks_truncated");
+    const cv::Mat img = patternImage(2048, 2048, CV_8UC1);
+    writeTiff(d / "full.tif", img, -1, 1024, 1024, 0.f, COMPRESSION_LZW);
+    const auto size = fs::file_size(d / "full.tif");
+    fs::copy_file(d / "full.tif", d / "torn.tif");
+    fs::resize_file(d / "torn.tif", size / 2);
+    std::string error;
+    CHECK_FALSE(forEachTiffBlock(d / "torn.tif", [](const TiffImageInfo&, cv::Point, const cv::Mat&) { return true; }, &error));
+    CHECK_FALSE(error.empty());
+    CHECK_FALSE(isReadableTiff(d / "torn.tif"));
+    CHECK(isReadableTiff(d / "full.tif"));
+
+    int calls = 0;
+    error.clear();
+    CHECK_FALSE(forEachTiffBlock(d / "full.tif", [&calls](const TiffImageInfo&, cv::Point, const cv::Mat&) {
+        return ++calls < 2;
+    }, &error));
+    CHECK(calls == 2);
+    CHECK(error.find("stopped") != std::string::npos);
+    CHECK_FALSE(forEachTiffBlock(d / "absent.tif", [](const TiffImageInfo&, cv::Point, const cv::Mat&) { return true; }));
+    fs::remove_all(d);
 }

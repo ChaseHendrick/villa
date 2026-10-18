@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <stdexcept>
@@ -318,10 +319,12 @@ void TiffWriter::close() {
 
 namespace {
 
-// Decode every tile (or strip) of the first directory into a scratch buffer.
+// Decodes every tile (or strip) of the current directory, in file order, into
+// one reused scratch buffer and passes it to `onBlock` with the block index.
 // A payload that is truncated, points past the end of the file or fails to
-// decompress makes libtiff return -1 or a short count.
-bool decodesCompletely(TIFF* tf)
+// decompress makes libtiff return -1 or a short count, and stops the walk.
+// Returns false then, or when `onBlock` returns false.
+bool forEachEncodedBlock(TIFF* tf, const std::function<bool(uint32_t block, const uint8_t* data)>& onBlock)
 {
     if (TIFFIsTiled(tf)) {
         const tmsize_t tileBytes = TIFFTileSize(tf);
@@ -329,9 +332,12 @@ bool decodesCompletely(TIFF* tf)
             return false;
         std::vector<uint8_t> buf(static_cast<size_t>(tileBytes));
         const ttile_t n = TIFFNumberOfTiles(tf);
-        for (ttile_t t = 0; t < n; ++t)
+        for (ttile_t t = 0; t < n; ++t) {
             if (TIFFReadEncodedTile(tf, t, buf.data(), tileBytes) != tileBytes)
                 return false;
+            if (!onBlock(static_cast<uint32_t>(t), buf.data()))
+                return false;
+        }
         return true;
     }
 
@@ -352,8 +358,16 @@ bool decodesCompletely(TIFF* tf)
         const tmsize_t expected = TIFFVStripSize(tf, rows);
         if (expected <= 0 || TIFFReadEncodedStrip(tf, s, buf.data(), expected) != expected)
             return false;
+        if (!onBlock(static_cast<uint32_t>(s), buf.data()))
+            return false;
     }
     return true;
+}
+
+// Decode every tile (or strip) of the first directory into a scratch buffer.
+bool decodesCompletely(TIFF* tf)
+{
+    return forEachEncodedBlock(tf, [](uint32_t, const uint8_t*) { return true; });
 }
 
 } // namespace
@@ -374,6 +388,91 @@ bool isReadableTiff(const std::filesystem::path& path)
     TIFFSetErrorHandler(prevError);
     TIFFSetWarningHandler(prevWarning);
     return ok;
+}
+
+// ============================================================================
+// forEachTiffBlock
+// ============================================================================
+
+bool forEachTiffBlock(const std::filesystem::path& path,
+                      const std::function<bool(const TiffImageInfo&, cv::Point, const cv::Mat&)>& onBlock,
+                      std::string* error)
+{
+    const auto fail = [error](const std::string& message) {
+        if (error)
+            *error = message;
+        return false;
+    };
+
+    TIFF* tf = TIFFOpen(path.string().c_str(), "r");
+    if (!tf)
+        return fail("cannot open TIFF " + path.string());
+    struct Closer {
+        TIFF* tf;
+        ~Closer() { TIFFClose(tf); }
+    } closer{tf};
+
+    TiffImageInfo info;
+    uint16_t planar = PLANARCONFIG_CONTIG;
+    uint16_t extraCount = 0;
+    uint16_t* extraTypes = nullptr;
+    if (!TIFFGetField(tf, TIFFTAG_IMAGEWIDTH, &info.width) || !TIFFGetField(tf, TIFFTAG_IMAGELENGTH, &info.height)
+        || info.width == 0 || info.height == 0)
+        return fail("TIFF has no image size: " + path.string());
+    TIFFGetFieldDefaulted(tf, TIFFTAG_SAMPLESPERPIXEL, &info.samplesPerPixel);
+    TIFFGetFieldDefaulted(tf, TIFFTAG_BITSPERSAMPLE, &info.bitsPerSample);
+    TIFFGetFieldDefaulted(tf, TIFFTAG_SAMPLEFORMAT, &info.sampleFormat);
+    TIFFGetFieldDefaulted(tf, TIFFTAG_PLANARCONFIG, &planar);
+    if (TIFFGetField(tf, TIFFTAG_EXTRASAMPLES, &extraCount, &extraTypes))
+        info.extraSamples = extraCount;
+    info.tiled = TIFFIsTiled(tf) != 0;
+
+    if (info.sampleFormat != SAMPLEFORMAT_UINT && info.sampleFormat != SAMPLEFORMAT_VOID)
+        return fail("unsupported TIFF sample format " + std::to_string(info.sampleFormat) + " (only unsigned integers): "
+                    + path.string());
+    if (info.bitsPerSample != 8 && info.bitsPerSample != 16)
+        return fail("unsupported TIFF bit depth " + std::to_string(info.bitsPerSample) + " (only 8 or 16): " + path.string());
+    if (info.samplesPerPixel < 1 || info.samplesPerPixel > CV_CN_MAX)
+        return fail("unsupported TIFF sample count " + std::to_string(info.samplesPerPixel) + ": " + path.string());
+    if (info.samplesPerPixel > 1 && planar != PLANARCONFIG_CONTIG)
+        return fail("unsupported planar TIFF layout (only contiguous samples): " + path.string());
+
+    const int depth = info.bitsPerSample == 8 ? CV_8U : CV_16U;
+    const int type = CV_MAKETYPE(depth, info.samplesPerPixel);
+    const size_t pixelBytes = size_t(info.samplesPerPixel) * (info.bitsPerSample / 8);
+
+    uint32_t blockW = info.width, blockH = 0, blocksAcross = 1;
+    if (info.tiled) {
+        if (!TIFFGetField(tf, TIFFTAG_TILEWIDTH, &blockW) || !TIFFGetField(tf, TIFFTAG_TILELENGTH, &blockH) || blockW == 0
+            || blockH == 0)
+            return fail("TIFF has no tile size: " + path.string());
+        blocksAcross = (info.width + blockW - 1) / blockW;
+    } else {
+        TIFFGetFieldDefaulted(tf, TIFFTAG_ROWSPERSTRIP, &blockH);
+        if (blockH == 0 || blockH > info.height)
+            blockH = info.height;
+    }
+
+    bool callbackStopped = false;
+    const bool ok = forEachEncodedBlock(tf, [&](uint32_t block, const uint8_t* data) {
+        const uint32_t x = (block % blocksAcross) * blockW;
+        const uint32_t y = (block / blocksAcross) * blockH;
+        if (x >= info.width || y >= info.height)
+            return true;  // padding tiles past the image never hold pixels
+        const int w = int(std::min(blockW, info.width - x));
+        const int h = int(std::min(blockH, info.height - y));
+        const cv::Mat view(h, w, type, const_cast<uint8_t*>(data), size_t(blockW) * pixelBytes);
+        if (!onBlock(info, cv::Point(int(x), int(y)), view)) {
+            callbackStopped = true;
+            return false;
+        }
+        return true;
+    });
+    if (callbackStopped)
+        return fail("stopped by the caller: " + path.string());
+    if (!ok)
+        return fail("TIFF block failed to decode: " + path.string());
+    return true;
 }
 
 // ============================================================================

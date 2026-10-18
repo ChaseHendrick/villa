@@ -1,7 +1,9 @@
 #pragma once
 
 #include <opencv2/core/mat.hpp>
+#include <opencv2/core/types.hpp>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -101,6 +103,24 @@ private:
 // checked against anything. libtiff diagnostics are suppressed while
 // probing; the caller decides what to report.
 bool isReadableTiff(const std::filesystem::path& path);
+
+// Layout of a TIFF's first directory, as reported by forEachTiffBlock.
+struct TiffImageInfo {
+    uint32_t width = 0, height = 0;
+    uint16_t samplesPerPixel = 1, bitsPerSample = 8, sampleFormat = SAMPLEFORMAT_UINT, extraSamples = 0;
+    bool tiled = false;
+};
+
+// Decodes the first directory tile by tile (or strip by strip) in file order
+// and passes each block, clipped to the image and wrapped as a CV_8UC(n) or
+// CV_16UC(n) Mat that is valid only during the call, with its top-left pixel.
+// Contiguous 8 or 16 bit unsigned samples only. Memory use is one block,
+// whatever the image size. Returns false (message in *error) if the file does
+// not open, a block fails to decode, the layout is unsupported, or onBlock
+// returns false.
+bool forEachTiffBlock(const std::filesystem::path& path,
+                      const std::function<bool(const TiffImageInfo&, cv::Point topLeft, const cv::Mat& block)>& onBlock,
+                      std::string* error = nullptr);
 
 // Merge partial .partN.tif files into final TIFFs.
 // Scans outputPath (or its parent directory) for .partN.tif files,
