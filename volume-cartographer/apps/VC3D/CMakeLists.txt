@@ -213,6 +213,8 @@ set(srcs
     overlays/ViewerOverlayControllerBase.hpp
     overlays/SpiralOverlayController.cpp
     overlays/SpiralOverlayController.hpp
+    ink_labels/InkLabelAssist.cpp
+    ink_labels/InkLabelAssist.hpp
     ink_labels/InkLabelController.cpp
     ink_labels/InkLabelController.hpp
     ink_labels/InkLabelRaster.cpp

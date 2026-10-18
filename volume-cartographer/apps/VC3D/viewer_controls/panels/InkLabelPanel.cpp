@@ -2,11 +2,14 @@
 
 #include "elements/CollapsibleSettingsGroup.hpp"
 #include "elements/LabeledControlRow.hpp"
+#include "overlays/InkLabelOverlayController.hpp"
 #include "ink_labels/InkLabelController.hpp"
 
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFontMetrics>
+#include <QGridLayout>
 #include <QLabel>
 #include <QLocale>
 #include <QPainter>
@@ -14,6 +17,7 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -64,6 +68,23 @@ QCheckBox* makeCheck(const QString& text, QWidget* parent)
     auto* check = new QCheckBox(text, parent);
     check->setFocusPolicy(Qt::NoFocus);
     return check;
+}
+
+QComboBox* makeCombo(const QStringList& items, QWidget* parent)
+{
+    auto* combo = new QComboBox(parent);
+    combo->addItems(items);
+    combo->setFocusPolicy(Qt::NoFocus);
+    return combo;
+}
+
+QSpinBox* makeSpin(int min, int max, QWidget* parent)
+{
+    auto* spin = new QSpinBox(parent);
+    spin->setRange(min, max);
+    // Arrows and the wheel still work; the label keys keep working.
+    spin->setFocusPolicy(Qt::NoFocus);
+    return spin;
 }
 
 }  // namespace
@@ -152,12 +173,17 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     _polygonButton = makeButton(tr("Polygon"), toolRow, true);
     _polygonButton->setToolTip(tr("Click points and press Enter, or drag a lasso. Backspace removes a point, Esc cancels. L "
                                   "switches tools."));
+    _fillButton = makeButton(tr("Fill"), toolRow, true);
+    _fillButton->setToolTip(tr("Click to fill the connected region the Assist settings describe (prediction above or below the "
+                               "threshold, or equal labels). L switches tools."));
     auto* toolGroup = new QButtonGroup(this);
     toolGroup->setExclusive(true);
     toolGroup->addButton(_brushButton, int(InkLabelController::Tool::Brush));
     toolGroup->addButton(_polygonButton, int(InkLabelController::Tool::Polygon));
+    toolGroup->addButton(_fillButton, int(InkLabelController::Tool::Fill));
     toolRow->addControl(_brushButton);
     toolRow->addControl(_polygonButton);
+    toolRow->addControl(_fillButton);
     toolRow->addStretch(1);
     layout->addWidget(toolRow);
 
@@ -215,6 +241,113 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     _countsLabel->setWordWrap(true);
     layout->addWidget(_countsLabel);
 
+    // Assist: fill, suggestions and cleanup, folded away until needed.
+    _assistGroup = new CollapsibleSettingsGroup(tr("Assist"), this);
+    _assistGroup->setObjectName(QStringLiteral("inkLabelAssistGroup"));
+    _assistGroup->setToolTip(tr("Fill, suggestions and cleanup work in the visible part of the segment view and add one undo "
+                                "entry each."));
+    _assistGroup->setExpanded(false);
+    outer->addWidget(_assistGroup);
+    auto* assist = _assistGroup->contentLayout();
+    assist->setSpacing(6);
+
+    auto* guideRow = new LabeledControlRow(tr("Guide"), this);
+    _guideCombo = makeCombo({tr("Prediction"), tr("Labels")}, guideRow);
+    _guideCombo->setObjectName(QStringLiteral("inkLabelGuide"));
+    _guideCombo->setToolTip(tr("Fill from the selected ink prediction (single-channel only), or across equal labels."));
+    _sideCombo = makeCombo({tr("above"), tr("below")}, guideRow);
+    _sideCombo->setToolTip(tr("Prediction values at or above (or at or below) the threshold pass."));
+    guideRow->addControl(_guideCombo);
+    guideRow->addControl(_sideCombo);
+    guideRow->addStretch(1);
+    assist->addWidget(guideRow);
+
+    auto* fillRow = new LabeledControlRow(tr("Fill"), this);
+    _connectivityCombo = makeCombo({tr("4-connected"), tr("8-connected")}, fillRow);
+    _unlabeledOnlyCheck = makeCheck(tr("Unlabeled only"), fillRow);
+    _unlabeledOnlyCheck->setToolTip(tr("The fill tool fills only pixels that are neither ink nor background yet. (Suggestions "
+                                       "always leave labeled pixels alone.)"));
+    fillRow->addControl(_connectivityCombo);
+    fillRow->addControl(_unlabeledOnlyCheck);
+    fillRow->addStretch(1);
+    assist->addWidget(fillRow);
+
+    auto* thresholdRow = new LabeledControlRow(tr("Threshold"), this);
+    _thresholdSlider = new QSlider(Qt::Horizontal, thresholdRow);
+    _thresholdSlider->setObjectName(QStringLiteral("inkLabelThreshold"));
+    _thresholdSlider->setRange(0, 255);
+    _thresholdSlider->setFocusPolicy(Qt::NoFocus);
+    _thresholdSlider->setToolTip(tr("In the prediction's display units: 8-bit values as they are, other depths scaled to 0-255."));
+    _thresholdLabel = new QLabel(thresholdRow);
+    _thresholdLabel->setMinimumWidth(QFontMetrics(_thresholdLabel->font()).horizontalAdvance(QStringLiteral("255")));
+    thresholdRow->addControl(_thresholdSlider, 1);
+    thresholdRow->addControl(_thresholdLabel);
+    assist->addWidget(thresholdRow);
+
+    auto* suggestRow = new LabeledControlRow(tr("Suggest"), this);
+    _medianCombo = makeCombo({tr("no smoothing"), tr("median 3"), tr("median 5")}, suggestRow);
+    _minAreaSpin = makeSpin(0, 1000000, suggestRow);
+    _minAreaSpin->setSuffix(tr(" px min"));
+    _minAreaSpin->setSingleStep(10);
+    _minAreaSpin->setToolTip(tr("Smallest suggested component, in label pixels."));
+    suggestRow->addControl(_medianCombo);
+    suggestRow->addControl(_minAreaSpin);
+    suggestRow->addStretch(1);
+    assist->addWidget(suggestRow);
+
+    auto* suggestButtons = new LabeledControlRow(QString(), this);
+    _suggestButton = makeButton(tr("Suggest (U)"), suggestButtons, false);
+    _suggestButton->setObjectName(QStringLiteral("inkLabelSuggest"));
+    _suggestButton->setIcon(swatch(QColor::fromRgb(InkLabelOverlayController::suggestionColorTable()[1])));
+    _pickAllButton = makeButton(tr("Pick all (Shift+U)"), suggestButtons, false);
+    _pickAllButton->setObjectName(QStringLiteral("inkLabelPickAll"));
+    suggestButtons->addControl(_suggestButton);
+    suggestButtons->addControl(_pickAllButton);
+    suggestButtons->addStretch(1);
+    assist->addWidget(suggestButtons);
+
+    auto* acceptRow = new LabeledControlRow(QString(), this);
+    _acceptButton = makeButton(tr("Accept (Enter)"), acceptRow, false);
+    _acceptButton->setToolTip(tr("Paint the picked suggestions as ink, as one undo step."));
+    _discardButton = makeButton(tr("Discard (Esc)"), acceptRow, false);
+    acceptRow->addControl(_acceptButton);
+    acceptRow->addControl(_discardButton);
+    acceptRow->addStretch(1);
+    assist->addWidget(acceptRow);
+
+    _assistLabel = new QLabel(this);
+    _assistLabel->setObjectName(QStringLiteral("inkLabelAssistStatus"));
+    _assistLabel->setWordWrap(true);
+    assist->addWidget(_assistLabel);
+
+    auto* cleanupRow = new LabeledControlRow(tr("Cleanup"), this);
+    _cleanupSpin = makeSpin(1, 256, cleanupRow);
+    _cleanupSpin->setSuffix(tr(" px"));
+    _cleanupSpin->setToolTip(tr("Size n: specks and holes under n px, or grow, shrink and ring by n px."));
+    cleanupRow->addControl(_cleanupSpin);
+    cleanupRow->addStretch(1);
+    assist->addWidget(cleanupRow);
+    // Three columns, so the buttons fit the dock bar's pop-up.
+    auto* cleanupButtons = new QWidget(this);
+    auto* cleanupGrid = new QGridLayout(cleanupButtons);
+    cleanupGrid->setContentsMargins(0, 0, 0, 0);
+    const std::pair<Cleanup, QString> cleanups[] = {
+        {Cleanup::RemoveSpecks, tr("Remove specks")},
+        {Cleanup::FillHoles, tr("Fill holes")},
+        {Cleanup::Grow, tr("Grow")},
+        {Cleanup::Shrink, tr("Shrink")},
+        {Cleanup::BackgroundRing, tr("Background ring")},
+    };
+    int cleanupIndex = 0;
+    for (const auto& [kind, text] : cleanups) {
+        auto* button = makeButton(text, cleanupButtons, false);
+        button->setProperty("cleanup", int(kind));
+        cleanupGrid->addWidget(button, cleanupIndex / 3, cleanupIndex % 3);
+        _cleanupButtons.append(button);
+        ++cleanupIndex;
+    }
+    assist->addWidget(cleanupButtons);
+
     if (!_labels) {
         setEnabled(false);
         return;
@@ -243,12 +376,26 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     connect(_undoButton, &QPushButton::clicked, this, [this] { _labels->undo(Actor::User, true); });
     connect(_redoButton, &QPushButton::clicked, this, [this] { _labels->redo(Actor::User); });
     connect(_saveButton, &QPushButton::clicked, this, [this] { _labels->saveInteractive(); });
+    for (QComboBox* combo : {_guideCombo, _sideCombo, _connectivityCombo, _medianCombo})
+        connect(combo, &QComboBox::currentIndexChanged, this, &InkLabelPanel::pushAssist);
+    connect(_thresholdSlider, &QSlider::valueChanged, this, &InkLabelPanel::pushAssist);
+    connect(_unlabeledOnlyCheck, &QCheckBox::toggled, this, &InkLabelPanel::pushAssist);
+    connect(_minAreaSpin, &QSpinBox::valueChanged, this, &InkLabelPanel::pushAssist);
+    connect(_cleanupSpin, &QSpinBox::valueChanged, this, &InkLabelPanel::pushAssist);
+    connect(_suggestButton, &QPushButton::clicked, this, [this] { _labels->suggest(); });
+    connect(_pickAllButton, &QPushButton::clicked, this, [this] { _labels->pickAllSuggestions(); });
+    connect(_acceptButton, &QPushButton::clicked, this, [this] { _labels->acceptSuggestions(); });
+    connect(_discardButton, &QPushButton::clicked, this, [this] { _labels->cancelAssist(); });
+    for (QPushButton* button : std::as_const(_cleanupButtons))
+        connect(button, &QPushButton::clicked, this, [this, button] { _labels->runCleanup(Cleanup(button->property("cleanup").toInt())); });
+    connect(_labels, &InkLabelController::assistChanged, this, &InkLabelPanel::refreshAssist);
 
     connect(_labels, &InkLabelController::sessionChanged, this, &InkLabelPanel::refreshSession);
     connect(_labels, &InkLabelController::labelModeChanged, this, &InkLabelPanel::refreshSession);
     connect(_labels, &InkLabelController::dirtyChanged, this, &InkLabelPanel::refreshSession);
     connect(_labels, &InkLabelController::saveFinished, this, &InkLabelPanel::refreshSession);
     connect(_labels, &InkLabelController::toolStateChanged, this, &InkLabelPanel::refreshTools);
+    connect(_labels, &InkLabelController::toolStateChanged, this, &InkLabelPanel::refreshAssist);
     connect(_labels, &InkLabelController::displayChanged, this, &InkLabelPanel::refreshDisplay);
     connect(_labels, &InkLabelController::historyChanged, this, &InkLabelPanel::refreshHistory);
     connect(_labels, &InkLabelController::rasterChanged, this, [this](QRect) { _countsTimer->start(); });
@@ -257,6 +404,7 @@ InkLabelPanel::InkLabelPanel(InkLabelController* labels, QWidget* parent)
     refreshTools();
     refreshDisplay();
     refreshHistory();
+    refreshAssist();
 }
 
 void InkLabelPanel::refreshSession()
@@ -306,9 +454,11 @@ void InkLabelPanel::refreshSession()
                                                       _keepsInkCheck,
                                                       _brushButton,
                                                       _polygonButton,
+                                                      _fillButton,
                                                       _radiusSlider})
         w->setEnabled(editable || !session);
     _saveButton->setEnabled(editable);
+    refreshAssist();
     refreshHistory();
     refreshCounts();
 }
@@ -318,7 +468,7 @@ void InkLabelPanel::refreshTools()
     if (!_labels)
         return;
     const QSignalBlocker b1(_inkButton), b2(_backgroundButton), b3(_validationButton), b4(_eraserButton), b5(_keepsInkCheck),
-        b6(_brushButton), b7(_polygonButton), b8(_radiusSlider);
+        b6(_brushButton), b7(_polygonButton), b8(_radiusSlider), b9(_fillButton);
     _inkButton->setChecked(_labels->paintClass() == PaintClass::Ink);
     _backgroundButton->setChecked(_labels->paintClass() == PaintClass::Background);
     _validationButton->setChecked(_labels->paintClass() == PaintClass::Validation);
@@ -326,6 +476,7 @@ void InkLabelPanel::refreshTools()
     _keepsInkCheck->setChecked(_labels->backgroundKeepsInk());
     _brushButton->setChecked(_labels->tool() == InkLabelController::Tool::Brush);
     _polygonButton->setChecked(_labels->tool() == InkLabelController::Tool::Polygon);
+    _fillButton->setChecked(_labels->tool() == InkLabelController::Tool::Fill);
     _radiusSlider->setValue(radiusToSlider(_labels->radius()));
     _radiusLabel->setText(tr("%1 px").arg(QString::number(_labels->radius(), 'g', 3)));
 }
@@ -384,4 +535,63 @@ void InkLabelPanel::pushDisplay()
                         _showSupervisionCheck->isChecked(),
                         _showValidationCheck->isChecked(),
                         _opacitySlider->value() / 100.0);
+}
+
+void InkLabelPanel::refreshAssist()
+{
+    if (!_labels)
+        return;
+    const InkLabelController::AssistSettings& a = _labels->assistSettings();
+    {
+        const QSignalBlocker b1(_guideCombo), b2(_sideCombo), b3(_connectivityCombo), b4(_medianCombo), b5(_thresholdSlider),
+            b6(_unlabeledOnlyCheck), b7(_minAreaSpin), b8(_cleanupSpin);
+        _guideCombo->setCurrentIndex(a.guide == GuideKind::Prediction ? 0 : 1);
+        _sideCombo->setCurrentIndex(a.above ? 0 : 1);
+        _connectivityCombo->setCurrentIndex(a.connectivity == 8 ? 1 : 0);
+        _medianCombo->setCurrentIndex(a.median <= 1 ? 0 : (a.median >= 5 ? 2 : 1));
+        _thresholdSlider->setValue(a.threshold);
+        _unlabeledOnlyCheck->setChecked(a.unlabeledOnly);
+        _minAreaSpin->setValue(a.minArea);
+        _cleanupSpin->setValue(a.cleanupSize);
+    }
+    _thresholdLabel->setText(QString::number(a.threshold));
+
+    const InkLabelController::SessionInfo* session = _labels->session();
+    const bool editable = session && !session->locked && !session->readOnly;
+    const bool running = _labels->assistRunning();
+    const bool hasGuide = _labels->predictionGuide().has_value();
+    const SuggestionSet* suggestions = _labels->suggestions();
+    _suggestButton->setEnabled(editable && !running && hasGuide);
+    _suggestButton->setToolTip(hasGuide ? tr("Components of the thresholded prediction in view, drawn hatched in cyan; pixels "
+                                             "already labeled are left out. Click them to pick, Enter accepts the picked ones "
+                                             "as ink, Esc discards.")
+                                        : tr("Select a single-channel ink prediction above; color predictions have no values to "
+                                             "threshold."));
+    _acceptButton->setEnabled(editable && suggestions && !_labels->selectedSuggestions().empty());
+    _pickAllButton->setEnabled(suggestions && !suggestions->empty());
+    _discardButton->setEnabled(running || suggestions);
+    for (QPushButton* button : std::as_const(_cleanupButtons))
+        button->setEnabled(editable && !running);
+    if (running)
+        _assistLabel->setText(tr("Working... (Esc drops the result)"));
+    else if (suggestions)
+        _assistLabel->setText(tr("%1 suggestions, %2 picked").arg(suggestions->items.size()).arg(_labels->selectedSuggestions().size()));
+    else
+        _assistLabel->clear();
+}
+
+void InkLabelPanel::pushAssist()
+{
+    if (!_labels)
+        return;
+    InkLabelController::AssistSettings a = _labels->assistSettings();
+    a.guide = _guideCombo->currentIndex() == 1 ? GuideKind::Labels : GuideKind::Prediction;
+    a.above = _sideCombo->currentIndex() == 0;
+    a.connectivity = _connectivityCombo->currentIndex() == 1 ? 8 : 4;
+    a.median = _medianCombo->currentIndex() == 0 ? 1 : (_medianCombo->currentIndex() == 2 ? 5 : 3);
+    a.threshold = uint8_t(_thresholdSlider->value());
+    a.unlabeledOnly = _unlabeledOnlyCheck->isChecked();
+    a.minArea = _minAreaSpin->value();
+    a.cleanupSize = _cleanupSpin->value();
+    _labels->setAssistSettings(a);
 }

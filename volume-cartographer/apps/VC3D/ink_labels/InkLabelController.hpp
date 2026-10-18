@@ -5,11 +5,13 @@
 // label section of the Ink Detection dock, the keys and the mouse) and the
 // agent bridge both drive this one controller.
 
+#include "ink_labels/InkLabelAssist.hpp"
 #include "ink_labels/InkLabelRaster.hpp"
 #include "ink_labels/InkLabelStore.hpp"
 
 #include "vc/core/util/RenderCanvas.hpp"
 
+#include <QColor>
 #include <QDateTime>
 #include <QFuture>
 #include <QHash>
@@ -29,6 +31,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -49,7 +52,7 @@ class InkLabelController : public QObject
     Q_OBJECT
 
 public:
-    enum class Tool : uint8_t { Brush, Polygon };
+    enum class Tool : uint8_t { Brush, Polygon, Fill };
 
     struct Deps {
         CState* state = nullptr;
@@ -123,6 +126,23 @@ public:
         QString lockReason;
     };
 
+    // Fill, suggestion and cleanup settings (the Assist section of the dock).
+    struct AssistSettings {
+        // Fill: what decides the region, and for the prediction guide which
+        // side of the threshold passes.
+        vc3d::ink_labels::GuideKind guide = vc3d::ink_labels::GuideKind::Prediction;
+        uint8_t threshold = 128;
+        bool above = true;
+        int connectivity = 4;
+        bool unlabeledOnly = false;
+        // Suggestions: median kernel (1, 3 or 5) and smallest component.
+        int median = 3;
+        int minArea = 50;
+        // Cleanup size n in label px.
+        int cleanupSize = 3;
+        bool operator==(const AssistSettings&) const = default;
+    };
+
     struct LastSave {
         QDateTime atUtc;
         std::vector<std::pair<vc3d::ink_labels::LabelKind, std::filesystem::path>> files;
@@ -184,6 +204,39 @@ public:
     void setRadius(double labelPx);
     void setBackgroundKeepsInk(bool keep);
     void setDisplay(bool showLabels, bool ink, bool supervision, bool validation, double opacity);
+    void setAssistSettings(const AssistSettings& settings);
+    [[nodiscard]] const AssistSettings& assistSettings() const { return _assist; }
+
+    // Assisted labeling. Each runs on a worker from a raster snapshot and
+    // applies its result on the GUI thread as one undo entry. `bound` is the
+    // label rect to work in; by default the visible part of a viewer showing
+    // the session, else the whole canvas. They return false (with a status
+    // message) when refused: no writable session, another assist running, or
+    // no single-channel prediction for the prediction guide.
+    bool fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound = std::nullopt);
+    bool suggest(std::optional<cv::Rect> bound = std::nullopt);
+    bool runCleanup(vc3d::ink_labels::Cleanup kind, std::optional<cv::Rect> bound = std::nullopt);
+    // Picks or unpicks the suggestion under a label pixel.
+    bool toggleSuggestionAt(cv::Point2d labelPx);
+    void setSuggestionSelected(int id, bool selected);
+    // Picks every suggestion (Shift+U).
+    void pickAllSuggestions();
+    // Applies the picked suggestions as ink (one entry), skipping pixels that
+    // are already ink or background, and records them in the sidecar's
+    // provenance. Returns the changed pixels. With nothing picked it keeps
+    // the suggestions and says how to pick.
+    uint64_t acceptSuggestions();
+    void discardSuggestions();
+    // Esc: drops a running assist's result and any suggestions.
+    void cancelAssist();
+    [[nodiscard]] bool assistRunning() const { return _assistRunning; }
+    [[nodiscard]] const vc3d::ink_labels::SuggestionSet* suggestions() const
+    {
+        return _suggestions ? &*_suggestions : nullptr;
+    }
+    [[nodiscard]] const std::set<int>& selectedSuggestions() const { return _selectedSuggestions; }
+    // The Ink Detection dock's selected prediction, when it is single-channel.
+    [[nodiscard]] std::optional<vc3d::ink_labels::PredictionGuide> predictionGuide() const;
 
     [[nodiscard]] vc3d::ink_labels::PaintClass paintClass() const { return _class; }
     [[nodiscard]] bool erase() const { return _erase; }
@@ -196,8 +249,11 @@ public:
     [[nodiscard]] bool showValidation() const { return _showValidation; }
     [[nodiscard]] double opacity() const { return _opacity; }
     [[nodiscard]] vc3d::ink_labels::PaintOp currentOp() const;
+    [[nodiscard]] QString toolName() const;
     // Ink red, background blue, validation yellow, eraser gray.
     [[nodiscard]] static QColor colorFor(vc3d::ink_labels::PaintClass cls, bool erase);
+    // The color of the current class, or of the eraser.
+    [[nodiscard]] QColor classColor() const;
 
     [[nodiscard]] const SessionInfo* session() const;
     [[nodiscard]] const vc3d::ink_labels::TileRaster* raster() const;
@@ -226,6 +282,8 @@ signals:
     void labelModeChanged(bool enabled);
     void displayChanged();
     void saveFinished(const vc3d::ink_labels::SaveOutcome& outcome);
+    void assistChanged();
+    void assistFinished(const QString& what, quint64 changedPixels);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -249,6 +307,11 @@ public:
     {
         return _inFlight.value(storeDir).future;
     }
+    void setPredictionGuideForTesting(std::optional<vc3d::ink_labels::PredictionGuide> guide)
+    {
+        _guideForTesting = std::move(guide);
+    }
+    [[nodiscard]] QFuture<void> assistFutureForTesting() const { return _assistFuture; }
     bool keyForTesting(int key);
 #endif
 
@@ -259,6 +322,16 @@ private:
         QPointer<QObject> view;
         QPointer<QObject> viewport;
         QPointer<SpiralBrushCursorWidget> cursor;
+    };
+
+    // A worker's answer: a mask to apply, or a suggestion set to show.
+    struct AssistResult {
+        QString what;
+        QString editKind;
+        std::optional<vc3d::ink_labels::MaskResult> mask;
+        vc3d::ink_labels::PaintOp op;
+        std::optional<vc3d::ink_labels::SuggestionSet> suggestions;
+        QString error;
     };
 
     struct OpenRequest {
@@ -302,6 +375,13 @@ private:
     void finishTransaction();
     uint64_t applyEdit(const std::function<uint64_t(vc3d::ink_labels::EditTxn&)>& edit, vc3d::ink_labels::Actor actor,
                        const QString& label, const QString& editKind);
+    bool canStartAssist(QString* why) const;
+    void startAssist(std::function<AssistResult()> work);
+    void finishAssist(const AssistResult& result);
+    [[nodiscard]] std::optional<cv::Rect> visibleLabelRect(VolumeViewerBase* viewer) const;
+    [[nodiscard]] cv::Rect defaultBound() const;
+    void refreshSuggestionPreview();
+    bool handleAssistKey(int key);
     bool canEdit(QString* why) const;
     void notifyRasterChanged(const cv::Rect& labelRect);
     void notifyHistory();
@@ -342,6 +422,17 @@ private:
     bool _backgroundKeepsInk = false;
     bool _showLabels = true, _showInk = true, _showSupervision = true, _showValidation = true;
     double _opacity = 0.6;
+    AssistSettings _assist;
+
+    // Assist state: one worker at a time; a newer generation drops the result.
+    QFuture<void> _assistFuture;
+    uint64_t _assistGeneration = 0;
+    bool _assistRunning = false;
+    std::optional<vc3d::ink_labels::SuggestionSet> _suggestions;
+    std::set<int> _selectedSuggestions;
+#ifdef VC_TESTING
+    std::optional<vc3d::ink_labels::PredictionGuide> _guideForTesting;
+#endif
 
     std::unique_ptr<Session> _session;
     uint64_t _sessionGeneration = 0;
@@ -349,6 +440,7 @@ private:
     QList<QShortcut*> _shortcuts;
     QShortcut* _toggleShortcut = nullptr;
     QShortcut* _showShortcut = nullptr;
+    QShortcut* _pickAllShortcut = nullptr;
     // Enter, Backspace and Esc: enabled only while they have work to do.
     QList<QShortcut*> _editKeyShortcuts;
     QAction* _labelModeAction = nullptr;
@@ -380,4 +472,6 @@ private:
     cv::Point2d _lastLassoPoint;
     double _lassoMinStep = 1.0;
     bool _leftDown = false;
+    // The visible label rect of the viewer a fill click happened in.
+    std::optional<cv::Rect> _pressBound;
 };

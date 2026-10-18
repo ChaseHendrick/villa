@@ -1,6 +1,8 @@
 // Ink labels: raster, history, files, controller, overlay and keys.
 
 #include "Keybinds.hpp"
+#include "SpiralBrushCursorWidget.hpp"
+#include "ink_labels/InkLabelAssist.hpp"
 #include "ink_labels/InkLabelController.hpp"
 #include "ink_labels/InkLabelRaster.hpp"
 #include "ink_labels/InkLabelStore.hpp"
@@ -250,6 +252,14 @@ private slots:
     void displayTilesPoolExactly();
     void displayTilesMeetOnDevicePixels();
     void panelDrivesController();
+    void predictionGuideMapsWithFlips();
+    void floodConnectivityAndBounds();
+    void floodFollowsEqualLabels();
+    void suggestionsFilterAndAccept();
+    void cleanupsMatchFixtures();
+    void escapeDropsRunningAssist();
+    void cursorRingDefaultUnchanged();
+    void fillToolAndAssistKeys();
 };
 
 void TestInkLabels::paintOpTable()
@@ -922,6 +932,8 @@ void TestInkLabels::keysCollideWithNothing()
                                                   &kb::shortcuts::InkLabelValidation,
                                                   &kb::shortcuts::InkLabelEraser,
                                                   &kb::shortcuts::InkLabelTool,
+                                                  &kb::shortcuts::InkLabelSuggest,
+                                                  &kb::shortcuts::InkLabelPickAll,
                                                   &kb::shortcuts::InkLabelShow,
                                                   &kb::shortcuts::InkLabelUndo,
                                                   &kb::shortcuts::InkLabelRedo,
@@ -1642,6 +1654,8 @@ void TestInkLabels::panelDrivesController()
             QVERIFY2(w->focusPolicy() == Qt::NoFocus, qPrintable(w->objectName()));
     }
     QVERIFY(panel.findChild<CollapsibleSettingsGroup*>(QStringLiteral("inkLabelGroup")));
+    auto* assistGroup = panel.findChild<CollapsibleSettingsGroup*>(QStringLiteral("inkLabelAssistGroup"));
+    QVERIFY(assistGroup && !assistGroup->isExpanded());  // folded until needed
     QVERIFY(l.labels->openForTesting(testCanvas({600, 400}), toPath(dir), "seg").ok);
     auto* folder = panel.findChild<QLabel*>(QStringLiteral("inkLabelFolder"));
     QVERIFY(folder->toolTip().endsWith(QStringLiteral("seg")));
@@ -1674,6 +1688,439 @@ void TestInkLabels::panelDrivesController()
     byText(QStringLiteral("Undo"))->click();
     QCOMPARE(int(l.labels->history()->undoDepth()), 0);
     QVERIFY(panel.findChild<QLabel*>(QStringLiteral("inkLabelStatus"))->text().contains(QStringLiteral("no unsaved changes")));
+}
+
+// ---------------------------------------------------------------------------
+// Assisted labeling
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Paints exactly the pixels of `rect` with `op`, as one history entry.
+void paintRect(TileRaster& raster, History& history, const cv::Rect& rect, PaintOp op)
+{
+    EditTxn txn(raster, "rect", Actor::User);
+    txn.applyMask(rect.tl(), cv::Mat_<uint8_t>(rect.size(), uint8_t(255)), op);
+    HistoryEntry entry = txn.commit(history.nextSerial());
+    if (!entry.changes.empty())
+        history.push(std::move(entry));
+}
+
+// A 10 x 8 grid at scale 0.1: a 100 x 80 px canvas.
+vc::RenderCanvas assistCanvas()
+{
+    return vc::RenderCanvas::make({10, 8}, {0.1f, 0.1f}, 1.0);
+}
+
+PredictionGuide numberedGuide(int cols, int rows)
+{
+    PredictionGuide guide;
+    guide.scalar.create(rows, cols);
+    for (int y = 0; y < rows; ++y)
+        for (int x = 0; x < cols; ++x)
+            guide.scalar(y, x) = uint8_t(y * cols + x);
+    guide.source = "numbered";
+    return guide;
+}
+
+// A guide as large as the canvas grid stretch, 255 inside `ink` rects.
+PredictionGuide guideWith(cv::Size canvas, const std::vector<cv::Rect>& ink)
+{
+    PredictionGuide guide;
+    guide.scalar = cv::Mat_<uint8_t>::zeros(canvas);
+    for (const auto& r : ink)
+        guide.scalar(r & cv::Rect(cv::Point(0, 0), canvas)) = 255;
+    guide.source = "fixture";
+    return guide;
+}
+
+}  // namespace
+
+void TestInkLabels::predictionGuideMapsWithFlips()
+{
+    const auto canvas = assistCanvas();
+    QCOMPARE(canvas.size, cv::Size(100, 80));
+    // A 5 x 4 prediction stretched over the 10 x 8 grid: each prediction
+    // pixel spans 2 grid steps, so 20 x 20 label px.
+    for (const bool hflip : {false, true})
+        for (const bool vflip : {false, true}) {
+            PredictionGuide guide = numberedGuide(5, 4);
+            guide.hflip = hflip;
+            guide.vflip = vflip;
+            for (int y = 0; y < 80; y += 7)
+                for (int x = 0; x < 100; x += 9) {
+                    const cv::Vec2d g = canvas.canvasToGrid({x + 0.5, y + 0.5});
+                    int i = std::clamp(int(std::floor(g[0] * 5 / 10)), 0, 4);
+                    int j = std::clamp(int(std::floor(g[1] * 4 / 8)), 0, 3);
+                    if (hflip)
+                        i = 4 - i;
+                    if (vflip)
+                        j = 3 - j;
+                    QCOMPARE(int(predictionAt(guide, canvas, {x + 0.5, y + 0.5})), j * 5 + i);
+                }
+            // The sampled rect agrees with the point lookup everywhere.
+            const cv::Rect rect(13, 7, 61, 49);
+            const cv::Mat_<uint8_t> sampled = sampleGuide(guide, canvas, rect);
+            for (int y = 0; y < rect.height; ++y)
+                for (int x = 0; x < rect.width; ++x)
+                    QCOMPARE(sampled(y, x), predictionAt(guide, canvas, {rect.x + x + 0.5, rect.y + y + 0.5}));
+        }
+    // Grid (0, 0) is label (0, 0) here (canvas 100 = 10 / 0.1), so prediction
+    // pixel (0, 0) covers label pixels 0..19 exactly.
+    const PredictionGuide guide = numberedGuide(5, 4);
+    QCOMPARE(int(predictionAt(guide, canvas, {19.5, 19.5})), 0);
+    QCOMPARE(int(predictionAt(guide, canvas, {20.5, 0.5})), 1);
+    QCOMPARE(int(predictionAt(guide, canvas, {0.5, 20.5})), 5);
+}
+
+void TestInkLabels::floodConnectivityAndBounds()
+{
+    // Guide pixels equal label pixels on a grid of 1 at scale 1.
+    const auto canvas = vc::RenderCanvas::make({64, 64}, {1.f, 1.f}, 1.0);
+    PredictionGuide guide;
+    guide.scalar = cv::Mat_<uint8_t>::zeros(64, 64);
+    // Two blocks touching only at a corner.
+    guide.scalar(cv::Rect(10, 10, 5, 5)) = 200;
+    guide.scalar(cv::Rect(15, 15, 5, 5)) = 200;
+    TileRaster raster(canvas.size);
+    FloodOptions options;
+    options.threshold = 128;
+    auto four = floodRegion(raster, &guide, GuideKind::Prediction, canvas, {11, 11}, {}, options);
+    QVERIFY(four);
+    QCOMPARE(four->count(), uint64_t(25));
+    QVERIFY(!four->reachedBound);
+    options.connectivity = 8;
+    auto eight = floodRegion(raster, &guide, GuideKind::Prediction, canvas, {11, 11}, {}, options);
+    QVERIFY(eight);
+    QCOMPARE(eight->count(), uint64_t(50));
+    // Below the threshold from a dark seed: everything else.
+    options.above = false;
+    auto dark = floodRegion(raster, &guide, GuideKind::Prediction, canvas, {0, 0}, {}, options);
+    QVERIFY(dark);
+    QCOMPARE(dark->count(), uint64_t(64 * 64 - 50));
+    // A seed that does not pass gives nothing.
+    QVERIFY(!floodRegion(raster, &guide, GuideKind::Prediction, canvas, {11, 11}, {}, options));
+    // "Unlabeled only" stops at labeled pixels.
+    options.above = true;
+    options.connectivity = 4;
+    options.unlabeledOnly = true;
+    History labeled;
+    paintRect(raster, labeled, cv::Rect(10, 12, 5, 1), paintOp(PaintClass::Background, false, false));
+    auto unlabeled = floodRegion(raster, &guide, GuideKind::Prediction, canvas, {11, 11}, {}, options);
+    QVERIFY(unlabeled);
+    QCOMPARE(unlabeled->count(), uint64_t(10));
+    // An explicit bound clips the region.
+    options.unlabeledOnly = false;
+    auto clipped = floodRegion(raster, &guide, GuideKind::Prediction, canvas, {11, 11}, cv::Rect(0, 0, 13, 64), options);
+    QVERIFY(clipped);
+    QCOMPARE(clipped->count(), uint64_t(3 * 5));
+    QCOMPARE(clipped->mask.size(), cv::Size(13, 64));
+    // It stopped at the bound, not at the canvas edge: the caller says so.
+    QVERIFY(clipped->reachedBound);
+
+    // The window cap: a 5000 px wide passable band fills only 4096 px of it.
+    const auto wide = vc::RenderCanvas::make({5000, 40}, {1.f, 1.f}, 1.0);
+    PredictionGuide band;
+    band.scalar = cv::Mat_<uint8_t>(40, 5000, uint8_t(255));
+    TileRaster wideRaster(wide.size);
+    auto capped = floodRegion(wideRaster, &band, GuideKind::Prediction, wide, {2500, 20}, {}, FloodOptions{});
+    QVERIFY(capped);
+    QCOMPARE(capped->mask.cols, kMaxAssistWindow);
+    QCOMPARE(capped->origin.x, 2500 - kMaxAssistWindow / 2);
+    QCOMPARE(capped->count(), uint64_t(kMaxAssistWindow) * 40);
+}
+
+void TestInkLabels::floodFollowsEqualLabels()
+{
+    const auto canvas = vc::RenderCanvas::make({60, 40}, {1.f, 1.f}, 1.0);
+    TileRaster raster(canvas.size);
+    History history;
+    commitTo(raster, history, polygon({{0, 0}, {30, 0}, {30, 40}, {0, 40}}), paintOp(PaintClass::Background, false, false));
+    commitTo(raster, history, disc(15, 20, 6), paintOp(PaintClass::Ink, false, false));
+    const cv::Mat_<uint8_t> values = fullImage(raster);
+    FloodOptions options;
+    // Seeded in the background half: the ring around the ink disc, not the
+    // disc and not the unlabeled half.
+    auto region = floodRegion(raster, nullptr, GuideKind::Labels, canvas, {2, 2}, {}, options);
+    QVERIFY(region);
+    uint64_t background = 0;
+    for (int y = 0; y < 40; ++y)
+        for (int x = 0; x < 60; ++x)
+            background += values(y, x) == kSupervision;
+    QCOMPARE(region->count(), background);
+    for (int y = 0; y < 40; ++y)
+        for (int x = 0; x < 60; ++x)
+            QCOMPARE(region->mask(y, x) != 0, values(y, x) == kSupervision);
+    // The prediction guide without a prediction refuses.
+    QVERIFY(!floodRegion(raster, nullptr, GuideKind::Prediction, canvas, {2, 2}, {}, options));
+}
+
+void TestInkLabels::suggestionsFilterAndAccept()
+{
+    const auto canvas = vc::RenderCanvas::make({200, 120}, {1.f, 1.f}, 1.0);
+    // A big blob, a small blob, a 1 px line (removed by the opening) and salt
+    // noise (removed by the median).
+    PredictionGuide guide = guideWith(canvas.size, {cv::Rect(20, 20, 40, 30), cv::Rect(120, 70, 6, 6)});
+    guide.scalar(cv::Rect(80, 10, 1, 100)) = 255;
+    std::mt19937 rng(3);
+    std::uniform_int_distribution<int> ux(0, 199), uy(0, 119);
+    for (int i = 0; i < 300; ++i)
+        guide.scalar(uy(rng), ux(rng)) = 255;
+    guide.scalar(cv::Rect(20, 20, 40, 30)) = 255;
+
+    SuggestionSet set = suggestComponents(guide, canvas, {}, 128, true, 3, 20);
+    QCOMPARE(int(set.items.size()), 2);
+    QCOMPARE(set.idAt({30, 30}), 1);
+    QCOMPARE(set.idAt({122, 72}), 2);
+    QCOMPARE(set.idAt({80, 50}), 0);
+    // A larger minimum keeps the big blob only.
+    SuggestionSet big = suggestComponents(guide, canvas, {}, 128, true, 3, 100);
+    QCOMPARE(int(big.items.size()), 1);
+    QVERIFY(std::abs(big.items.front().area - 40 * 30) <= 2 * (40 + 30));
+    // Pixels already labeled ink or background are left out, so a
+    // suggestion over background can never turn it into ink.
+    {
+        TileRaster labels(canvas.size);
+        History history;
+        paintRect(labels, history, cv::Rect(20, 20, 20, 30), paintOp(PaintClass::Background, false, false));
+        const SuggestionSet trimmed = suggestComponents(guide, canvas, {}, 128, true, 3, 20, &labels);
+        QCOMPARE(trimmed.idAt({25, 30}), 0);
+        const int id = trimmed.idAt({50, 30});
+        QVERIFY(id > 0);
+        MaskResult mask = trimmed.maskFor({id});
+        QCOMPARE(int(mask.mask(30 - mask.origin.y, 25 - mask.origin.x)), 0);
+        // And dropSupervised clears a mask made before the labels changed.
+        MaskResult stale = set.maskFor({1});
+        QVERIFY(stale.mask(30 - stale.origin.y, 25 - stale.origin.x) != 0);
+        dropSupervised(labels, stale);
+        QCOMPARE(int(stale.mask(30 - stale.origin.y, 25 - stale.origin.x)), 0);
+    }
+
+    // Through the controller: pick one, accept as one ink entry, and the
+    // sidecar records it.
+    QTemporaryDir dir;
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    l.labels->setPredictionGuideForTesting(guide);
+    InkLabelController::AssistSettings a;
+    a.threshold = 128;
+    a.median = 3;
+    a.minArea = 20;
+    l.labels->setAssistSettings(a);
+    QVERIFY(l.labels->suggest(cv::Rect(0, 0, 200, 120)));
+    QTRY_VERIFY(!l.labels->assistRunning());
+    QVERIFY(l.labels->suggestions());
+    QCOMPARE(int(l.labels->suggestions()->items.size()), 2);
+    QVERIFY(!l.labels->overlay()->suggestionImageForTesting().isNull());
+    // Enter before picking keeps the suggestions and says how to pick.
+    QCOMPARE(l.labels->acceptSuggestions(), uint64_t(0));
+    QVERIFY(l.labels->suggestions());
+    QVERIFY(l.messages.last().contains(QStringLiteral("Nothing picked")));
+    // While suggestions show, a press picks instead of painting.
+    l.labels->setLabelModeEnabled(true);
+    QVERIFY(l.labels->pressForTesting({30, 30}));
+    QCOMPARE(l.labels->selectedSuggestions(), std::set<int>{1});
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+    const uint64_t changed = l.labels->acceptSuggestions();
+    QCOMPARE(changed, uint64_t(set.items.front().area));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QVERIFY(!l.labels->suggestions());
+    QVERIFY(l.labels->overlay()->suggestionImageForTesting().isNull());
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, changed);
+    QVERIFY(l.labels->save().result().ok);
+    QString error;
+    const auto sidecar = readSidecar(l.labels->session()->paths.sidecar(), &error);
+    QVERIFY(sidecar);
+    QCOMPARE(sidecar->provenance.size(), qsizetype(1));
+    const QJsonObject entry = sidecar->provenance.first().toObject();
+    QCOMPARE(entry.value("kind").toString(), QStringLiteral("suggestion"));
+    QCOMPARE(entry.value("source").toString(), QStringLiteral("fixture"));
+    QCOMPARE(entry.value("threshold").toInt(), 128);
+    QCOMPARE(entry.value("median").toInt(), 3);
+    QCOMPARE(entry.value("min_area").toInt(), 20);
+    QCOMPARE(uint64_t(entry.value("pixels").toDouble()), changed);
+    QCOMPARE(sidecar->edits.value("user").toObject().value("suggestion").toInt(), 1);
+
+    // Again: the big blob is ink now, so only the small one is suggested.
+    // Pick all, then paint background over part of it before accepting (as
+    // an agent could): accepting keeps that background.
+    QVERIFY(l.labels->suggest(cv::Rect(0, 0, 200, 120)));
+    QTRY_VERIFY(!l.labels->assistRunning());
+    QCOMPARE(int(l.labels->suggestions()->items.size()), 1);
+    l.labels->pickAllSuggestions();
+    QCOMPARE(l.labels->selectedSuggestions().size(), std::size_t(1));
+    l.labels->setPaintClass(PaintClass::Background);
+    QVERIFY(l.labels->applyShape(polygon({{118, 68}, {124, 68}, {124, 80}, {118, 80}}), Actor::User) > 0);
+    QVERIFY(l.labels->acceptSuggestions() > 0);
+    QCOMPARE(int(l.labels->raster()->at(121, 72)), int(kSupervision));
+    QCOMPARE(int(l.labels->raster()->at(125, 73)), int(kInk | kSupervision));
+}
+
+void TestInkLabels::cleanupsMatchFixtures()
+{
+    const cv::Size size(80, 60);
+    const auto build = [&](const std::function<void(TileRaster&, History&)>& paint) {
+        TileRaster raster(size);
+        History history;
+        paint(raster, history);
+        return raster;
+    };
+    const PaintOp ink = paintOp(PaintClass::Ink, false, false);
+    const PaintOp background = paintOp(PaintClass::Background, false, false);
+
+    // Remove specks: a 2 x 2 speck goes, a 10 x 10 square stays; the speck
+    // stays supervised (background).
+    {
+        TileRaster r = build([&](TileRaster& t, History& h) {
+            paintRect(t, h, cv::Rect(10, 10, 10, 10), ink);
+            paintRect(t, h, cv::Rect(40, 40, 2, 2), ink);
+        });
+        const CleanupResult c = cleanup(r, {}, Cleanup::RemoveSpecks, 10);
+        QCOMPARE(c.count(), uint64_t(4));
+        QVERIFY(c.mask(40, 40) && c.mask(41, 41) && !c.mask(15, 15));
+        QCOMPARE(c.op, (PaintOp{0, kInk}));
+        QCOMPARE(int(c.op.apply(kInk | kSupervision)), int(kSupervision));
+    }
+    // Fill holes: a 2 x 2 hole fills; the outside (touching the bound) does not.
+    {
+        TileRaster r = build([&](TileRaster& t, History& h) {
+            paintRect(t, h, cv::Rect(10, 10, 20, 20), ink);
+            paintRect(t, h, cv::Rect(19, 19, 2, 2), paintOp(PaintClass::Ink, true, false));
+        });
+        const CleanupResult c = cleanup(r, {}, Cleanup::FillHoles, 10);
+        QCOMPARE(c.count(), uint64_t(4));
+        QVERIFY(c.mask(19, 19) && c.mask(20, 20) && !c.mask(0, 0));
+        QCOMPARE(c.op, (PaintOp{uint8_t(kInk | kSupervision), 0}));
+    }
+    // Grow and shrink by 1 px against a brute force with the 3 x 3 ellipse
+    // (a cross).
+    {
+        TileRaster r = build([&](TileRaster& t, History& h) { paintRect(t, h, cv::Rect(20, 20, 20, 15), ink); });
+        const cv::Mat_<uint8_t> v = fullImage(r);
+        const auto isInk = [&](int x, int y) { return x >= 0 && y >= 0 && x < size.width && y < size.height && (v(y, x) & kInk); };
+        const CleanupResult grow = cleanup(r, {}, Cleanup::Grow, 1);
+        const CleanupResult shrink = cleanup(r, {}, Cleanup::Shrink, 1);
+        for (int y = 0; y < size.height; ++y)
+            for (int x = 0; x < size.width; ++x) {
+                const bool cross = isInk(x - 1, y) || isInk(x + 1, y) || isInk(x, y - 1) || isInk(x, y + 1);
+                QCOMPARE(grow.mask(y, x) != 0, !isInk(x, y) && cross);
+                const bool inside = isInk(x - 1, y) && isInk(x + 1, y) && isInk(x, y - 1) && isInk(x, y + 1);
+                QCOMPARE(shrink.mask(y, x) != 0, isInk(x, y) && !inside);
+            }
+        QCOMPARE(shrink.op, (PaintOp{0, kInk}));
+    }
+    // Background ring: only unlabeled pixels next to ink become background.
+    {
+        TileRaster r = build([&](TileRaster& t, History& h) {
+            paintRect(t, h, cv::Rect(20, 20, 10, 10), ink);
+            paintRect(t, h, cv::Rect(30, 20, 3, 10), paintOp(PaintClass::Validation, false, false));
+            paintRect(t, h, cv::Rect(17, 20, 3, 10), background);
+        });
+        const cv::Mat_<uint8_t> v = fullImage(r);
+        const CleanupResult c = cleanup(r, {}, Cleanup::BackgroundRing, 2);
+        QCOMPARE(c.op, (PaintOp{kSupervision, 0}));
+        for (int y = 0; y < size.height; ++y)
+            for (int x = 0; x < size.width; ++x)
+                if (c.mask(y, x))
+                    QCOMPARE(int(v(y, x) & (kInk | kSupervision)), 0);
+        QVERIFY(c.mask(25, 31));   // right of the ink: validation only, so unlabeled
+        QVERIFY(!c.mask(25, 18));  // left: already background
+        QVERIFY(c.mask(18, 25));   // above the ink
+        QVERIFY(!c.mask(25, 25));  // the ink itself
+    }
+}
+
+void TestInkLabels::escapeDropsRunningAssist()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    // A large canvas keeps the cleanup worker busy for a moment.
+    const auto canvas = testCanvas({4000, 3000});
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    QVERIFY(l.labels->applyShape(polygon({{100, 100}, {3900, 100}, {3900, 2900}, {100, 2900}}), Actor::User) > 0);
+    InkLabelController::AssistSettings a;
+    a.cleanupSize = 6;
+    l.labels->setAssistSettings(a);
+    QVERIFY(l.labels->runCleanup(Cleanup::BackgroundRing));
+    QVERIFY(l.labels->assistRunning());
+    // A second assist is refused while one runs.
+    QVERIFY(!l.labels->runCleanup(Cleanup::Grow));
+    QVERIFY(l.labels->keyForTesting(Qt::Key_Escape));
+    QVERIFY(!l.labels->assistRunning());
+    QFuture<void> future = l.labels->assistFutureForTesting();
+    future.waitForFinished();
+    QTest::qWait(50);
+    QCoreApplication::processEvents();
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    // Without Esc the same cleanup lands as one entry.
+    QVERIFY(l.labels->runCleanup(Cleanup::BackgroundRing));
+    QTRY_VERIFY_WITH_TIMEOUT(!l.labels->assistRunning(), 30000);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 2);
+    QCOMPARE(l.labels->history()->top()->label, std::string("background ring"));
+}
+
+void TestInkLabels::cursorRingDefaultUnchanged()
+{
+    SpiralBrushCursorWidget cursor;
+    cursor.setCursorState(QPointF(10, 10), 20, true, false);
+    QCOMPARE(cursor.ringColor(), QColor(255, 255, 255, 220));
+    cursor.setCursorState(QPointF(10, 10), 20, true, false, QColor(50, 255, 215), QColor(255, 64, 64));
+    QCOMPARE(cursor.ringColor(), QColor(255, 64, 64));
+
+    QTemporaryDir dir;
+    Labeler l;
+    l.labels->setPaintClass(PaintClass::Background);
+    QCOMPARE(l.labels->classColor(), QColor(64, 128, 255));
+    l.labels->setErase(true);
+    QCOMPARE(l.labels->classColor(), QColor(200, 200, 200));
+}
+
+void TestInkLabels::fillToolAndAssistKeys()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    const auto canvas = vc::RenderCanvas::make({100, 80}, {1.f, 1.f}, 1.0);
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    l.labels->setLabelModeEnabled(true);
+    // L cycles brush, polygon, fill.
+    l.labels->setTool(InkLabelController::Tool::Fill);
+    QCOMPARE(l.labels->toolName(), QStringLiteral("fill"));
+    // No prediction: the prediction fill refuses with a message.
+    QVERIFY(l.labels->pressForTesting({10, 10}));
+    QVERIFY(l.messages.join('\n').contains(QStringLiteral("single-channel ink prediction")));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+    // With one, a click fills the region as one entry with the class op.
+    l.labels->setPredictionGuideForTesting(guideWith(canvas.size, {cv::Rect(5, 5, 20, 10), cv::Rect(50, 40, 20, 20)}));
+    l.labels->setPaintClass(PaintClass::Background);
+    QVERIFY(l.labels->pressForTesting({10, 10}));
+    QTRY_VERIFY(!l.labels->assistRunning());
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).background, uint64_t(200));
+    QCOMPARE(l.labels->history()->top()->label, std::string("fill"));
+    // Esc and Enter only matter while an assist is pending.
+    QVERIFY(!l.labels->keyForTesting(Qt::Key_Escape));
+    QVERIFY(l.labels->suggest(cv::Rect(0, 0, 100, 80)));
+    QTRY_VERIFY(!l.labels->assistRunning());
+    QVERIFY(l.labels->suggestions());
+    // The filled block is background now, so only the other block is
+    // suggested.
+    QCOMPARE(int(l.labels->suggestions()->items.size()), 1);
+    QVERIFY(l.labels->suggestions()->items.front().bbox.x >= 50);
+    const uint64_t area = uint64_t(l.labels->suggestions()->items.front().area);
+    const auto shortcutNamed = [&l](const QString& name) -> QShortcut* {
+        for (QShortcut* shortcut : l.labels->shortcutsForTesting())
+            if (shortcut->objectName() == name)
+                return shortcut;
+        return nullptr;
+    };
+    QVERIFY(shortcutNamed(QStringLiteral("ink_label_pick_all"))->isEnabled());
+    l.labels->setSuggestionSelected(1, true);
+    QVERIFY(l.labels->keyForTesting(Qt::Key_Return));
+    QVERIFY(!l.labels->suggestions());
+    QVERIFY(!shortcutNamed(QStringLiteral("ink_label_pick_all"))->isEnabled());
+    QCOMPARE(int(l.labels->history()->undoDepth()), 2);
+    // The accepted component (the opened region) is ink now.
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, area);
 }
 
 QTEST_MAIN(TestInkLabels)

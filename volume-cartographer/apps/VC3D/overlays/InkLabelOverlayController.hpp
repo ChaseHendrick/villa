@@ -20,7 +20,12 @@
 #include <array>
 #include <cstdint>
 #include <list>
+#include <set>
 #include <vector>
+
+namespace vc3d::ink_labels {
+struct SuggestionSet;
+}
 
 class InkLabelController;
 class VolumeViewerBase;
@@ -43,6 +48,12 @@ public:
     void invalidate(const QRect& labelRect);
     void setStyle(bool ink, bool supervision, bool validation, double opacity);
     void setPolygonPreview(std::vector<cv::Point2d> labelPx, QColor color);
+    // Hatched preview of threshold suggestions: picked components in the ink
+    // color, the rest in cyan. Null clears it.
+    void setSuggestionPreview(const vc3d::ink_labels::SuggestionSet* suggestions, const std::set<int>& selected);
+    // The preview's code image (0 none, 1 and 2 unpicked stripes, 3 and 4
+    // picked stripes) and its color table.
+    [[nodiscard]] static QList<QRgb> suggestionColorTable();
     // The session (or its canvas) changed: drop every cached tile.
     void resetForSession();
 
@@ -64,6 +75,7 @@ public:
     [[nodiscard]] uint32_t revisionForTesting(int level, int i, int j) const { return revision(level, i, j); }
     [[nodiscard]] int buildsForTesting() const { return _builds; }
     [[nodiscard]] int cacheCapacityForTesting() const { return cacheCapacity(); }
+    [[nodiscard]] const QImage& suggestionImageForTesting() const { return _suggestionImage; }
 #endif
 
 protected:
@@ -94,5 +106,8 @@ private:
     QList<QRgb> _colorTable;
     std::vector<cv::Point2d> _polygon;
     QColor _polygonColor;
+    QImage _suggestionImage;
+    QPixmap _suggestionPixmap;
+    cv::Point _suggestionOrigin;
     int _builds = 0;
 };

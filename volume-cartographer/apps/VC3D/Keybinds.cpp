@@ -237,9 +237,25 @@ const ShortcutDef InkLabelEraser{
 const ShortcutDef InkLabelTool{
     "ink_label_tool",
     kSectionInkLabels,
-    "Switch brush and polygon",
+    "Switch brush, polygon and fill",
     ShortcutKind::Text,
     "L",
+    QKeySequence::Open
+};
+const ShortcutDef InkLabelSuggest{
+    "ink_label_suggest",
+    kSectionInkLabels,
+    "Suggest ink from the prediction (click to pick, Enter to accept)",
+    ShortcutKind::Text,
+    "U",
+    QKeySequence::Open
+};
+const ShortcutDef InkLabelPickAll{
+    "ink_label_pick_all",
+    kSectionInkLabels,
+    "Pick every ink suggestion (while suggestions are shown)",
+    ShortcutKind::Text,
+    "Shift+U",
     QKeySequence::Open
 };
 const ShortcutDef InkLabelShow{
@@ -664,6 +680,8 @@ QString buildKeybindsHelpText()
         { kSectionInkLabels, shortcuts::InkLabelValidation.description, HelpKeyType::Shortcut, &shortcuts::InkLabelValidation, nullptr, nullptr },
         { kSectionInkLabels, shortcuts::InkLabelEraser.description, HelpKeyType::Shortcut, &shortcuts::InkLabelEraser, nullptr, nullptr },
         { kSectionInkLabels, shortcuts::InkLabelTool.description, HelpKeyType::Shortcut, &shortcuts::InkLabelTool, nullptr, nullptr },
+        { kSectionInkLabels, shortcuts::InkLabelSuggest.description, HelpKeyType::Shortcut, &shortcuts::InkLabelSuggest, nullptr, nullptr },
+        { kSectionInkLabels, shortcuts::InkLabelPickAll.description, HelpKeyType::Shortcut, &shortcuts::InkLabelPickAll, nullptr, nullptr },
         { kSectionInkLabels, shortcuts::InkLabelShow.description, HelpKeyType::Shortcut, &shortcuts::InkLabelShow, nullptr, nullptr },
         { kSectionInkLabels, shortcuts::InkLabelUndo.description, HelpKeyType::Shortcut, &shortcuts::InkLabelUndo, nullptr, nullptr },
         { kSectionInkLabels, shortcuts::InkLabelRedo.description, HelpKeyType::Shortcut, &shortcuts::InkLabelRedo, nullptr, nullptr },
@@ -673,7 +691,8 @@ QString buildKeybindsHelpText()
         { kSectionInkLabels, "Brush radius", HelpKeyType::Literal, nullptr, nullptr, "Ctrl+Mouse Wheel" },
         { kSectionInkLabels, "Close polygon", HelpKeyType::Literal, nullptr, nullptr, "Enter or Double-click" },
         { kSectionInkLabels, "Remove last polygon point", HelpKeyType::Literal, nullptr, nullptr, "Backspace" },
-        { kSectionInkLabels, "Cancel polygon", HelpKeyType::Literal, nullptr, nullptr, "Esc" },
+        { kSectionInkLabels, "Cancel polygon, fill or suggestions", HelpKeyType::Literal, nullptr, nullptr, "Esc" },
+        { kSectionInkLabels, "Accept the picked suggestions", HelpKeyType::Literal, nullptr, nullptr, "Enter" },
 
         { kSectionLineAnnotation, "Rotate the current cut about the horizontal axis", HelpKeyType::Literal, nullptr, nullptr, "W / S" },
         { kSectionLineAnnotation, "Rotate the current cut about the vertical axis", HelpKeyType::Literal, nullptr, nullptr, "A / D" },

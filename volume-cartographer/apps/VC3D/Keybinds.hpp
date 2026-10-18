@@ -54,6 +54,8 @@ extern const ShortcutDef InkLabelBackground;
 extern const ShortcutDef InkLabelValidation;
 extern const ShortcutDef InkLabelEraser;
 extern const ShortcutDef InkLabelTool;
+extern const ShortcutDef InkLabelSuggest;
+extern const ShortcutDef InkLabelPickAll;
 extern const ShortcutDef InkLabelShow;
 extern const ShortcutDef InkLabelUndo;
 extern const ShortcutDef InkLabelRedo;

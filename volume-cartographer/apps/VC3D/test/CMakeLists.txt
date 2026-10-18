@@ -669,6 +669,8 @@ add_executable(test_ink_labels
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelRaster.hpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.cpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelStore.hpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelAssist.cpp
+    ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelAssist.hpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelController.cpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/ink_labels/InkLabelController.hpp
     ${PROJECT_SOURCE_DIR}/apps/VC3D/overlays/InkLabelOverlayController.cpp

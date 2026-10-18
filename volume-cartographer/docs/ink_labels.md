@@ -39,9 +39,10 @@ Every label pixel has three independent bits, as the trainer sees them:
   drag a lasso and release. **Backspace** removes the last vertex, **Esc**
   cancels. Self-intersecting outlines fill even-odd.
 
-**L** switches tools. Each stroke, polygon or Shift+Click segment is one undo
-step: **Ctrl+Z** undoes and **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes, also when
-a dock control has focus. Label undo is separate from segmentation undo. The
+**L** switches tools (brush, polygon and the fill tool of the Assist rows).
+Each stroke, polygon or Shift+Click segment is one undo step: **Ctrl+Z**
+undoes and **Ctrl+Shift+Z** (or **Ctrl+Y**) redoes, also when a dock control
+has focus. Label undo is separate from segmentation undo. The
 history keeps whole operations up to 256 MiB. Switching to another segment
 keeps unsaved labels (as an autosave) but ends their undo history; switching
 back restores the labels with a fresh history.
@@ -54,6 +55,44 @@ blue; the dock sets which of them are shown and their opacity. When zoomed out,
 blocks of label pixels are pooled: a block is red if any pixel is ink, yellow
 if any is validation, solid blue if all are supervised and faint blue if some
 are. Labels are not drawn on the volumetric composite camera.
+
+## Assist
+
+The **Assist** group (folded by default; click its title to open it) uses the
+ink prediction selected in the Ink Detection dock
+(single-channel predictions only; a color prediction has no values to
+threshold). Each tool works on the part of the segment visible in the view,
+runs in the background, and lands as one undo step. **Esc** drops a result
+that is still being computed.
+
+* **Fill** (the third tool; **L** cycles brush, polygon and fill). A click
+  fills the connected region where the prediction is at or above (or at or
+  below) the **Threshold**, or, with the **Labels** guide, where the labels
+  equal the clicked pixel. It paints the current class, 4- or 8-connected,
+  and with **Unlabeled only** stops at pixels that are already ink or
+  background. A fill covers at most 4096 x 4096 label pixels around the
+  click; when it stops at the edge of the view, the status bar says so (zoom
+  out to fill further).
+* **Suggest (U)** smooths the prediction with an optional median, thresholds
+  it, removes one-pixel speckle and thin lines with a small opening, and shows
+  the connected components of at least the minimum area, hatched in cyan.
+  Pixels already labeled ink or background are left out, so accepting a
+  suggestion never overwrites the annotator's background. Click components to
+  pick them (they turn red) or press **Shift+U** (**Pick all**) to pick them
+  all, then press **Enter** to accept them as ink, or **Esc** to discard them.
+  **Enter** with nothing picked keeps the suggestions. Accepted suggestions
+  are recorded in the sidecar's `provenance` with the threshold and filter
+  settings.
+* **Cleanup** works on the visible labels with size n: **Remove specks**
+  (ink components under n px become background), **Fill holes** (holes under
+  n px inside ink become ink), **Grow** and **Shrink** (ink by n px; shrunk
+  pixels stay supervised as background) and **Background ring** (unlabeled
+  pixels within n px of ink become background).
+
+The threshold is in the prediction's display units: 8-bit images as they
+are, other depths scaled to 0 to 255. The brush ring takes the class color:
+red for ink, blue for background, yellow for validation and gray for the
+eraser.
 
 ## Files
 
@@ -128,15 +167,19 @@ which the renderer uses too.
 | I | Toggle ink label mode |
 | W, F, V | Paint ink, background, validation |
 | Z | Toggle the eraser |
-| L | Switch tools |
+| L | Switch tools: brush, polygon, fill |
+| U | Suggest ink from the prediction |
 | H | Show or hide the labels |
 | Ctrl+Z, Ctrl+Shift+Z | Undo, redo (in label mode) |
 | Ctrl+S | Save (in label mode) |
 | Ctrl+Mouse Wheel | Brush radius |
 | Shift+Click | Straight stroke from the last point |
 | Enter, Backspace, Esc | Close, shorten or cancel a polygon |
+| Shift+U | Pick every suggestion |
+| Enter, Esc | Accept the picked suggestions; drop suggestions or a running assist |
 
 The keys work wherever focus is in the main window, including the docks and the
 dock bar's pop-up, while the **main** (segment) workspace is
 the current tab; other workspaces keep their own bindings of these letters.
-Enter, Backspace and Esc are taken only while a polygon is open.
+Enter, Backspace, Esc and Shift+U are taken only while a polygon is open or
+suggestions are shown.

@@ -1,5 +1,6 @@
 #include "overlays/InkLabelOverlayController.hpp"
 
+#include "ink_labels/InkLabelAssist.hpp"
 #include "ink_labels/InkLabelController.hpp"
 #include "volume_viewers/CVolumeViewerView.hpp"
 #include "volume_viewers/VolumeViewerBase.hpp"
@@ -14,6 +15,9 @@ using namespace vc3d::ink_labels;
 namespace {
 
 constexpr qreal kPreviewZ = 20.0;
+constexpr qreal kSuggestionZ = 19.5;
+// Diagonal stripes this many label pixels wide.
+constexpr int kHatchWidth = 3;
 
 int ceilDiv(int a, int b)
 {
@@ -137,6 +141,53 @@ void InkLabelOverlayController::setPolygonPreview(std::vector<cv::Point2d> label
     refreshAll();
 }
 
+QList<QRgb> InkLabelOverlayController::suggestionColorTable()
+{
+    QList<QRgb> table(5, qRgba(0, 0, 0, 0));
+    table[1] = qRgba(0, 220, 255, 170);
+    table[2] = qRgba(0, 220, 255, 45);
+    table[3] = qRgba(255, 64, 64, 220);
+    table[4] = qRgba(255, 64, 64, 110);
+    return table;
+}
+
+void InkLabelOverlayController::setSuggestionPreview(const SuggestionSet* suggestions, const std::set<int>& selected)
+{
+    if (!suggestions || suggestions->labels.empty()) {
+        if (_suggestionImage.isNull())
+            return;
+        _suggestionImage = QImage();
+        _suggestionPixmap = QPixmap();
+        refreshAll();
+        return;
+    }
+    const cv::Mat_<int>& labels = suggestions->labels;
+    std::vector<uint8_t> picked(suggestions->items.size() + 1, 0);
+    for (const int id : selected)
+        if (id > 0 && std::size_t(id) < picked.size())
+            picked[std::size_t(id)] = 1;
+    QImage image(labels.cols, labels.rows, QImage::Format_Indexed8);
+    image.setColorTable(suggestionColorTable());
+    for (int y = 0; y < labels.rows; ++y) {
+        const int* src = labels[y];
+        uchar* dst = image.scanLine(y);
+        const int gy = suggestions->origin.y + y;
+        for (int x = 0; x < labels.cols; ++x) {
+            const int id = src[x];
+            if (id <= 0 || std::size_t(id) >= picked.size()) {
+                dst[x] = 0;
+                continue;
+            }
+            const bool stripe = (((suggestions->origin.x + x + gy) / kHatchWidth) & 1) == 0;
+            dst[x] = uchar((picked[std::size_t(id)] ? 3 : 1) + (stripe ? 0 : 1));
+        }
+    }
+    _suggestionImage = std::move(image);
+    _suggestionPixmap = QPixmap();
+    _suggestionOrigin = suggestions->origin;
+    refreshAll();
+}
+
 QImage InkLabelOverlayController::buildTile(int level, int i, int j) const
 {
     const TileRaster* raster = _labels.raster();
@@ -253,7 +304,7 @@ bool InkLabelOverlayController::isOverlayEnabledFor(VolumeViewerBase* viewer) co
 {
     if (!viewer || !_labels.viewerShowsSession(viewer))
         return false;
-    return (_labels.showLabels() && _labels.raster()) || !_polygon.empty();
+    return (_labels.showLabels() && _labels.raster()) || !_polygon.empty() || !_suggestionImage.isNull();
 }
 
 QPointF InkLabelOverlayController::snapToDevicePixel(const QPointF& scenePos, const QTransform& toDevice)
@@ -345,6 +396,19 @@ void InkLabelOverlayController::collectPrimitives(VolumeViewerBase* viewer, Over
                     entry.pixmap = QPixmap::fromImage(entry.image);
                 builder.addImage(entry.image, entry.pixmap, o, scaleX, scaleY, 1.0, kZ);
             }
+    }
+
+    if (!_suggestionImage.isNull()) {
+        const cv::Point2d corner(_suggestionOrigin.x, _suggestionOrigin.y);
+        const auto origin = _labels.labelToScene(viewer, corner);
+        const auto alongX = _labels.labelToScene(viewer, corner + cv::Point2d(_suggestionImage.width(), 0));
+        const auto alongY = _labels.labelToScene(viewer, corner + cv::Point2d(0, _suggestionImage.height()));
+        if (origin && alongX && alongY) {
+            if (_suggestionPixmap.isNull())
+                _suggestionPixmap = QPixmap::fromImage(_suggestionImage);
+            builder.addImage(_suggestionImage, _suggestionPixmap, *origin, (alongX->x() - origin->x()) / _suggestionImage.width(),
+                             (alongY->y() - origin->y()) / _suggestionImage.height(), 1.0, kSuggestionZ);
+        }
     }
 
     if (_polygon.size() >= 1) {

@@ -19,6 +19,7 @@
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QFutureInterface>
+#include <QJsonArray>
 #include <QFutureWatcher>
 #include <QGraphicsView>
 #include <QKeyEvent>
@@ -167,6 +168,8 @@ InkLabelController::InkLabelController(Deps deps, QObject* parent)
         connect(_deps.state, &CState::volumeClosing, this, [this]() { closeSession(); });
     }
     createShortcuts();
+    // Enter, Esc and Shift+U follow the suggestions and running assists.
+    connect(this, &InkLabelController::assistChanged, this, &InkLabelController::updateShortcutStates);
     _labelModeAction = new QAction(tr("Ink label mode") + QLatin1Char('\t')
                                        + vc3d::keybinds::sequenceFor(vc3d::keybinds::shortcuts::InkLabelMode)
                                              .toString(QKeySequence::NativeText),
@@ -245,7 +248,11 @@ void InkLabelController::createShortcuts()
         setPaintClass(PaintClass::Validation);
     });
     make(keys::InkLabelEraser, [this] { setErase(!_erase); });
-    make(keys::InkLabelTool, [this] { setTool(_tool == Tool::Brush ? Tool::Polygon : Tool::Brush); });
+    make(keys::InkLabelTool, [this] {
+        setTool(_tool == Tool::Brush ? Tool::Polygon : _tool == Tool::Polygon ? Tool::Fill : Tool::Brush);
+    });
+    make(keys::InkLabelSuggest, [this] { suggest(); });
+    _pickAllShortcut = make(keys::InkLabelPickAll, [this] { pickAllSuggestions(); });
     _showShortcut = make(keys::InkLabelShow, [this] {
         setDisplay(!_showLabels, _showInk, _showSupervision, _showValidation, _opacity);
         statusMessage(_showLabels ? tr("Ink labels shown") : tr("Ink labels hidden"), 2000);
@@ -269,6 +276,7 @@ void InkLabelController::createShortcuts()
         shortcut->setContext(Qt::WindowShortcut);
         shortcut->setAutoRepeat(key == Qt::Key_Backspace);
         shortcut->setObjectName(QStringLiteral("ink_label_edit_key_%1").arg(key, 0, 16));
+        shortcut->setProperty("inkLabelKey", key);
         connect(shortcut, &QShortcut::activated, this, [this, key] { handleEditKey(key); });
         _editKeyShortcuts.append(shortcut);
     }
@@ -285,15 +293,26 @@ void InkLabelController::updateShortcutStates()
         else
             shortcut->setEnabled(workspace && _labelMode && _session != nullptr);
     }
-    const bool editKeys = workspace && _labelMode && !_polygon.empty();
-    for (QShortcut* shortcut : std::as_const(_editKeyShortcuts))
-        shortcut->setEnabled(editKeys);
+    // Enter closes a polygon or accepts suggestions, Esc cancels either (or
+    // drops a running assist), Backspace shortens a polygon.
+    const bool polygon = _labelMode && !_polygon.empty();
+    for (QShortcut* shortcut : std::as_const(_editKeyShortcuts)) {
+        const int key = shortcut->property("inkLabelKey").toInt();
+        bool enabled = polygon;
+        if (key == Qt::Key_Return || key == Qt::Key_Enter)
+            enabled = enabled || _suggestions.has_value();
+        else if (key == Qt::Key_Escape)
+            enabled = enabled || _suggestions.has_value() || _assistRunning;
+        shortcut->setEnabled(workspace && enabled);
+    }
+    if (_pickAllShortcut)
+        _pickAllShortcut->setEnabled(workspace && _suggestions.has_value());
 }
 
 bool InkLabelController::handleEditKey(int key)
 {
     if (_polygon.empty())
-        return false;
+        return handleAssistKey(key);
     switch (key) {
         case Qt::Key_Return:
         case Qt::Key_Enter:
@@ -376,6 +395,24 @@ PaintOp InkLabelController::currentOp() const
     return paintOp(_class, _erase, _backgroundKeepsInk);
 }
 
+QString InkLabelController::toolName() const
+{
+    switch (_tool) {
+        case Tool::Brush:
+            return QStringLiteral("brush");
+        case Tool::Polygon:
+            return QStringLiteral("polygon");
+        case Tool::Fill:
+            return QStringLiteral("fill");
+    }
+    return {};
+}
+
+QColor InkLabelController::classColor() const
+{
+    return colorFor(_class, _erase);
+}
+
 QColor InkLabelController::colorFor(PaintClass cls, bool erase)
 {
     if (erase)
@@ -402,7 +439,7 @@ void InkLabelController::updateModeLine()
     QString what = _erase ? tr("eraser") : className(_class);
     if (_session->info.readOnly || _session->info.locked)
         what += tr(", read-only");
-    const QString tool = _tool == Tool::Brush ? tr("brush r %1").arg(QString::number(_radius, 'g', 3)) : tr("polygon");
+    const QString tool = _tool == Tool::Brush ? tr("brush r %1").arg(QString::number(_radius, 'g', 3)) : toolName();
     _deps.modeLine(tr("Ink labels: %1, %2").arg(what, tool));
 }
 
@@ -416,8 +453,7 @@ void InkLabelController::announceToolState()
         if (_class == PaintClass::Background && _backgroundKeepsInk)
             what += tr(" (keeps ink)");
     }
-    const QString tool = _tool == Tool::Brush ? tr("brush") : tr("polygon");
-    statusMessage(tr("Ink labels: %1, %2, r %3").arg(what, tool, QString::number(_radius, 'g', 4)), 3000);
+    statusMessage(tr("Ink labels: %1, %2, r %3").arg(what, toolName(), QString::number(_radius, 'g', 4)), 3000);
     updateModeLine();
 }
 
@@ -936,6 +972,7 @@ void InkLabelController::installSession(std::unique_ptr<Session> session)
     _session->generation = ++_sessionGeneration;
     _session->lastWriteMs = nowMs();
     _polygon.clear();
+    cancelAssist();
     _overlay->resetForSession();
     updateShortcutStates();
     updateModeLine();
@@ -951,6 +988,7 @@ void InkLabelController::closeSession()
         return;
     commitOpenStroke();
     cancelPolygon();
+    cancelAssist();
     if (_session->writable() && _session->history.dirty()) {
         startCheckpoint();
         statusMessage(tr("Unsaved ink labels for %1 kept as autosave").arg(QString::fromStdString(_session->info.segment)), 6000);
@@ -1507,7 +1545,7 @@ void InkLabelController::updateCursor(BoundViewer& bound, const QPointF& deviceP
             d = devicePxPerLabelPx(bound.viewer, *label);
     }
     const int diameter = std::max(2, int(std::lround(2.0 * _radius * d)));
-    bound.cursor->setCursorState(devicePos, diameter, visible, false);
+    bound.cursor->setCursorState(devicePos, diameter, visible, false, QColor(50, 255, 215), classColor());
 }
 
 void InkLabelController::hideCursors()
@@ -1531,6 +1569,15 @@ bool InkLabelController::handlePress(cv::Point2d labelPx, Qt::KeyboardModifiers 
     QString why;
     if (!canEdit(&why)) {
         statusMessage(why, 4000);
+        return true;
+    }
+    if (_suggestions) {
+        // While suggestions are shown a click picks or unpicks one.
+        toggleSuggestionAt(labelPx);
+        return true;
+    }
+    if (_tool == Tool::Fill) {
+        fillAt(labelPx, _pressBound);
         return true;
     }
     _leftDown = true;
@@ -1609,7 +1656,7 @@ void InkLabelController::updatePolygonPreview(std::optional<cv::Point2d> hover)
     std::vector<cv::Point2d> points = _polygon;
     if (hover && !points.empty() && !_lasso)
         points.push_back(*hover);
-    _overlay->setPolygonPreview(std::move(points), colorFor(_class, _erase));
+    _overlay->setPolygonPreview(std::move(points), classColor());
     // Enter, Backspace and Esc follow whether a polygon is open.
     updateShortcutStates();
 }
@@ -1694,6 +1741,7 @@ bool InkLabelController::eventFilter(QObject* watched, QEvent* event)
                 closePolygon();
                 return true;
             }
+            _pressBound = visibleLabelRect(viewer);
             return handlePress(*label, mouse->modifiers(), devicePxPerLabelPx(viewer, *label));
         }
         case QEvent::MouseButtonRelease: {
@@ -1706,6 +1754,375 @@ bool InkLabelController::eventFilter(QObject* watched, QEvent* event)
         case QEvent::KeyPress:
             // Normally the window shortcuts take these keys first.
             return handleEditKey(static_cast<QKeyEvent*>(event)->key());
+        default:
+            return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Assisted labeling
+// ---------------------------------------------------------------------------
+
+void InkLabelController::setAssistSettings(const AssistSettings& settings)
+{
+    AssistSettings s = settings;
+    s.connectivity = s.connectivity == 8 ? 8 : 4;
+    s.median = s.median <= 1 ? 1 : (s.median >= 5 ? 5 : 3);
+    s.minArea = std::max(0, s.minArea);
+    s.cleanupSize = std::clamp(s.cleanupSize, 1, 256);
+    if (s == _assist)
+        return;
+    _assist = s;
+    emit toolStateChanged();
+}
+
+std::optional<PredictionGuide> InkLabelController::predictionGuide() const
+{
+#ifdef VC_TESTING
+    if (_guideForTesting)
+        return _guideForTesting;
+#endif
+    auto* ink = _deps.viewers ? _deps.viewers->inkDetectionOverlay() : nullptr;
+    if (!ink || ink->selectedPath().empty() || !ink->selectedIsSingleChannel() || ink->selectedScalar().empty())
+        return std::nullopt;
+    PredictionGuide guide;
+    guide.scalar = ink->selectedScalar();
+    guide.hflip = ink->horizontalFlip();
+    guide.vflip = ink->verticalFlip();
+    guide.source = ink->selectedPath().string();
+    return guide;
+}
+
+std::optional<cv::Rect> InkLabelController::visibleLabelRect(VolumeViewerBase* viewer) const
+{
+    if (!viewer || !_session || !viewerShowsSession(viewer))
+        return std::nullopt;
+    auto* view = viewer->graphicsView();
+    if (!view || !view->viewport())
+        return std::nullopt;
+    const QRect device = view->viewport()->rect();
+    const QTransform toScene = view->viewportTransform().inverted();
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool first = true;
+    for (const QPoint& corner : {device.topLeft(), device.topRight(), device.bottomLeft(), device.bottomRight()}) {
+        const auto label = sceneToLabel(viewer, toScene.map(QPointF(corner)));
+        if (!label)
+            return std::nullopt;
+        x0 = first ? label->x : std::min(x0, label->x);
+        x1 = first ? label->x : std::max(x1, label->x);
+        y0 = first ? label->y : std::min(y0, label->y);
+        y1 = first ? label->y : std::max(y1, label->y);
+        first = false;
+    }
+    const cv::Rect rect(cv::Point(int(std::floor(x0)), int(std::floor(y0))), cv::Point(int(std::ceil(x1)) + 1, int(std::ceil(y1)) + 1));
+    const cv::Rect clipped = rect & cv::Rect(cv::Point(0, 0), _session->info.canvas.size);
+    if (clipped.empty())
+        return std::nullopt;
+    return clipped;
+}
+
+cv::Rect InkLabelController::defaultBound() const
+{
+    for (const auto& bound : _bound)
+        if (const auto rect = visibleLabelRect(bound.viewer))
+            return *rect;
+    return _session ? cv::Rect(cv::Point(0, 0), _session->info.canvas.size) : cv::Rect();
+}
+
+bool InkLabelController::canStartAssist(QString* why) const
+{
+    if (!canEdit(why))
+        return false;
+    if (_assistRunning) {
+        if (why)
+            *why = tr("An ink label assist is still running; press Esc to drop it.");
+        return false;
+    }
+    return true;
+}
+
+void InkLabelController::startAssist(std::function<AssistResult()> work)
+{
+    const uint64_t generation = ++_assistGeneration;
+    const uint64_t sessionGeneration = _session ? _session->generation : 0;
+    _assistRunning = true;
+    auto result = std::make_shared<AssistResult>();
+    _assistFuture = QtConcurrent::run([work = std::move(work), result] {
+        try {
+            *result = work();
+        } catch (const std::exception& e) {
+            result->error = QString::fromUtf8(e.what());
+        }
+    });
+    auto* watcher = new QFutureWatcher<void>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, result, generation, sessionGeneration]() {
+        watcher->deleteLater();
+        if (generation != _assistGeneration)
+            return;  // dropped (Esc, a newer assist, or a session change)
+        _assistRunning = false;
+        if (!_session || _session->generation != sessionGeneration) {
+            emit assistChanged();
+            return;
+        }
+        finishAssist(*result);
+    });
+    watcher->setFuture(_assistFuture);
+    emit assistChanged();
+}
+
+void InkLabelController::finishAssist(const AssistResult& result)
+{
+    if (!result.error.isEmpty()) {
+        statusMessage(tr("Ink labels: %1 failed: %2").arg(result.what, result.error), 6000);
+        emit assistChanged();
+        return;
+    }
+    if (result.suggestions) {
+        _suggestions = result.suggestions;
+        _selectedSuggestions.clear();
+        refreshSuggestionPreview();
+        statusMessage(_suggestions->empty() ? tr("No suggestions above the threshold here")
+                                            : tr("%n ink suggestion(s): click to pick, Shift+U picks all, Enter accepts, Esc discards", nullptr,
+                                                 int(_suggestions->items.size())),
+                      5000);
+        emit assistChanged();
+        emit assistFinished(result.what, 0);
+        return;
+    }
+    uint64_t changed = 0;
+    if (result.mask && result.mask->count() > 0) {
+        changed = applyEdit([&](EditTxn& txn) { return txn.applyMask(result.mask->origin, result.mask->mask, result.op); },
+                            Actor::User, result.what, result.editKind);
+    }
+    QString message = changed > 0 ? tr("Ink labels: %1 changed %2 px").arg(result.what).arg(changed)
+                                  : tr("Ink labels: %1 changed nothing").arg(result.what);
+    if (result.mask && result.mask->reachedBound)
+        message += tr("; it stopped at the edge of the view, zoom out to fill further");
+    statusMessage(message, result.mask && result.mask->reachedBound ? 6000 : 3000);
+    emit assistChanged();
+    emit assistFinished(result.what, changed);
+}
+
+bool InkLabelController::fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound)
+{
+    QString why;
+    if (!canStartAssist(&why)) {
+        statusMessage(why, 4000);
+        return false;
+    }
+    finishTransaction();
+    std::optional<PredictionGuide> guide;
+    if (_assist.guide == GuideKind::Prediction) {
+        guide = predictionGuide();
+        if (!guide) {
+            statusMessage(tr("Select a single-channel ink prediction in the Ink Detection dock to fill from it."), 5000);
+            return false;
+        }
+    }
+    const cv::Point seed(int(std::floor(labelPx.x)), int(std::floor(labelPx.y)));
+    FloodOptions flood;
+    flood.connectivity = _assist.connectivity;
+    flood.threshold = _assist.threshold;
+    flood.above = _assist.above;
+    flood.unlabeledOnly = _assist.unlabeledOnly;
+    const GuideKind kind = _assist.guide;
+    const PaintOp op = currentOp();
+    const vc::RenderCanvas canvas = _session->info.canvas;
+    const cv::Rect area = bound.value_or(defaultBound());
+    TileRaster snapshot = _session->raster.snapshot();
+    const QString what = tr("fill");
+    startAssist([=, snapshot = std::move(snapshot)]() {
+        AssistResult r;
+        r.what = what;
+        r.editKind = QStringLiteral("fill");
+        r.op = op;
+        r.mask = floodRegion(snapshot, guide ? &*guide : nullptr, kind, canvas, seed, area, flood);
+        return r;
+    });
+    return true;
+}
+
+bool InkLabelController::suggest(std::optional<cv::Rect> bound)
+{
+    QString why;
+    if (!canStartAssist(&why)) {
+        statusMessage(why, 4000);
+        return false;
+    }
+    finishTransaction();
+    std::optional<PredictionGuide> guide = predictionGuide();
+    if (!guide) {
+        statusMessage(tr("Select a single-channel ink prediction in the Ink Detection dock to get suggestions."), 5000);
+        return false;
+    }
+    _suggestions.reset();
+    _selectedSuggestions.clear();
+    refreshSuggestionPreview();
+    const vc::RenderCanvas canvas = _session->info.canvas;
+    const cv::Rect area = bound.value_or(defaultBound());
+    const AssistSettings s = _assist;
+    const QString what = tr("suggestions");
+    // Suggestions leave out pixels already labeled ink or background.
+    TileRaster snapshot = _session->raster.snapshot();
+    startAssist([=, g = std::move(*guide), snapshot = std::move(snapshot)]() {
+        AssistResult r;
+        r.what = what;
+        r.suggestions = suggestComponents(g, canvas, area, s.threshold, s.above, s.median, s.minArea, &snapshot);
+        return r;
+    });
+    return true;
+}
+
+bool InkLabelController::runCleanup(Cleanup kind, std::optional<cv::Rect> bound)
+{
+    QString why;
+    if (!canStartAssist(&why)) {
+        statusMessage(why, 4000);
+        return false;
+    }
+    finishTransaction();
+    const cv::Rect area = bound.value_or(defaultBound());
+    const int n = _assist.cleanupSize;
+    TileRaster snapshot = _session->raster.snapshot();
+    const QString what = QString::fromLatin1(cleanupName(kind));
+    startAssist([=, snapshot = std::move(snapshot)]() {
+        AssistResult r;
+        r.what = what;
+        r.editKind = QStringLiteral("cleanup");
+        CleanupResult c = cleanup(snapshot, area, kind, n);
+        r.op = c.op;
+        r.mask = MaskResult{c.origin, std::move(c.mask)};
+        return r;
+    });
+    return true;
+}
+
+bool InkLabelController::toggleSuggestionAt(cv::Point2d labelPx)
+{
+    if (!_suggestions)
+        return false;
+    const int id = _suggestions->idAt(cv::Point(int(std::floor(labelPx.x)), int(std::floor(labelPx.y))));
+    if (id <= 0)
+        return false;
+    setSuggestionSelected(id, !_selectedSuggestions.count(id));
+    return true;
+}
+
+void InkLabelController::setSuggestionSelected(int id, bool selected)
+{
+    if (!_suggestions || id <= 0 || id > int(_suggestions->items.size()))
+        return;
+    if (selected == bool(_selectedSuggestions.count(id)))
+        return;
+    if (selected)
+        _selectedSuggestions.insert(id);
+    else
+        _selectedSuggestions.erase(id);
+    refreshSuggestionPreview();
+    emit assistChanged();
+}
+
+uint64_t InkLabelController::acceptSuggestions()
+{
+    if (!_suggestions)
+        return 0;
+    QString why;
+    if (!canEdit(&why)) {
+        statusMessage(why, 4000);
+        return 0;
+    }
+    if (_selectedSuggestions.empty()) {
+        // Keep them: Enter before picking must not throw the work away.
+        statusMessage(tr("Nothing picked: click suggestions to pick them, Shift+U picks all, Esc discards."), 5000);
+        return 0;
+    }
+    const SuggestionSet set = std::move(*_suggestions);
+    const std::vector<int> ids(_selectedSuggestions.begin(), _selectedSuggestions.end());
+    _suggestions.reset();
+    _selectedSuggestions.clear();
+    refreshSuggestionPreview();
+    uint64_t changed = 0;
+    if (!ids.empty()) {
+        MaskResult mask = set.maskFor(ids);
+        // Labels may have changed since the suggestions were made: never turn
+        // a pixel the annotator labeled background into ink.
+        dropSupervised(_session->raster, mask);
+        changed = applyEdit([&](EditTxn& txn) { return txn.applyMask(mask.origin, mask.mask, paintOp(PaintClass::Ink, false, false)); },
+                            Actor::User, QStringLiteral("accept suggestions"), QStringLiteral("suggestion"));
+        if (changed > 0 && _session) {
+            QJsonObject entry;
+            entry["kind"] = QStringLiteral("suggestion");
+            entry["source"] = QString::fromStdString(set.source);
+            entry["threshold"] = int(set.threshold);
+            entry["above"] = set.above;
+            entry["median"] = set.median;
+            entry["min_area"] = set.minArea;
+            entry["components"] = int(ids.size());
+            entry["pixels"] = double(mask.count());
+            entry["at_utc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+            _session->provenance.append(entry);
+            while (_session->provenance.size() > kMaxProvenanceEntries)
+                _session->provenance.removeFirst();
+        }
+    }
+    statusMessage(tr("Ink labels: accepted %n suggestion(s), %1 px changed", nullptr, int(ids.size())).arg(changed), 4000);
+    emit assistChanged();
+    return changed;
+}
+
+void InkLabelController::pickAllSuggestions()
+{
+    if (!_suggestions || _suggestions->empty())
+        return;
+    for (const Suggestion& item : _suggestions->items)
+        _selectedSuggestions.insert(item.id);
+    refreshSuggestionPreview();
+    emit assistChanged();
+}
+
+void InkLabelController::discardSuggestions()
+{
+    if (!_suggestions)
+        return;
+    _suggestions.reset();
+    _selectedSuggestions.clear();
+    refreshSuggestionPreview();
+    emit assistChanged();
+}
+
+void InkLabelController::cancelAssist()
+{
+    const bool had = _assistRunning || _suggestions;
+    ++_assistGeneration;
+    _assistRunning = false;
+    _suggestions.reset();
+    _selectedSuggestions.clear();
+    refreshSuggestionPreview();
+    if (had)
+        emit assistChanged();
+}
+
+void InkLabelController::refreshSuggestionPreview()
+{
+    if (_overlay)
+        _overlay->setSuggestionPreview(_suggestions ? &*_suggestions : nullptr, _selectedSuggestions);
+}
+
+bool InkLabelController::handleAssistKey(int key)
+{
+    if (!_suggestions && !_assistRunning)
+        return false;
+    switch (key) {
+        case Qt::Key_Return:
+        case Qt::Key_Enter:
+            if (!_suggestions)
+                return false;
+            acceptSuggestions();
+            return true;
+        case Qt::Key_Escape:
+            cancelAssist();
+            statusMessage(tr("Ink labels: assist dropped"), 2000);
+            return true;
         default:
             return false;
     }
