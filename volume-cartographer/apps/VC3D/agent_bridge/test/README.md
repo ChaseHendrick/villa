@@ -25,3 +25,13 @@ described in `manual_bridge_support.py`:
 python3 apps/VC3D/agent_bridge/test/manual_bridge_test.py offscreen
 python3 apps/VC3D/agent_bridge/test/manual_bridge_test.py live
 ```
+
+`manual_bridge_inklabels.py` is a separate command because it needs no local
+fixtures: it builds a temporary project with flat segments and checks the
+`ink_labels.*` methods end to end, including a save, a reload from disk and an
+autosave restored after a hard kill:
+
+```sh
+python3 apps/VC3D/agent_bridge/test/manual_bridge_inklabels.py \
+  --vc3d build/ci-release-gcc/bin/VC3D
+```

@@ -131,6 +131,9 @@ public:
         std::array<uint64_t, 8> counts{};
         // Read-only or locked: why, in a sentence for the banner.
         QString lockReason;
+        // Locked: the canvas (or segment uuid) the labels were saved for, and
+        // the segment's now.
+        QString lockExpected, lockGot;
     };
 
     // Fill, suggestion and cleanup settings (the Assist section of the dock).
@@ -148,6 +151,16 @@ public:
         // Cleanup size n in label px.
         int cleanupSize = 3;
         bool operator==(const AssistSettings&) const = default;
+    };
+
+    // What ink_labels.read writes: the raw values (bits 1, 2, 4) or one bit
+    // as 0/255.
+    enum class ReadFormat : uint8_t { Values, Ink, Supervision, Validation };
+    struct ReadOutcome {
+        bool ok = false;
+        QString error;
+        cv::Rect rect;  // clipped to the canvas; empty when nothing was inside
+        vc3d::ink_labels::LabelCounts counts;
     };
 
     struct LastSave {
@@ -191,6 +204,8 @@ public:
     // resample) is reported through importFinished with needsDecision set and
     // nothing applied.
     bool importFile(const std::filesystem::path& path, const vc3d::ink_labels::ImportOptions& options);
+    bool importFile(const std::filesystem::path& path, const vc3d::ink_labels::ImportOptions& options,
+                    vc3d::ink_labels::Actor actor);
     // The trainer's dataset entry for the session's segment and version (see
     // vc3d::ink_labels::datasetEntry), and the same as indented JSON text.
     [[nodiscard]] QJsonObject datasetEntry() const;
@@ -198,6 +213,8 @@ public:
     // GUI save: asks before overwriting files changed outside VC3D.
     void saveInteractive();
     [[nodiscard]] bool saveInFlight() const;
+    // A trainer save (not a checkpoint) of the session's store is running.
+    [[nodiscard]] bool trainerSaveInFlight() const;
     // False while unsaved labels or writes are pending; then asks Save,
     // Discard or Cancel without blocking and calls retryClose once it is safe.
     // The answer lets exactly the next close through, so a close that another
@@ -221,6 +238,15 @@ public:
                         const QString& label);
     uint64_t applyMask(cv::Point origin, const cv::Mat_<uint8_t>& mask, vc3d::ink_labels::PaintOp op, vc3d::ink_labels::Actor actor,
                        const QString& label);
+    // Several shapes as one undo entry (an agent stroke through many points).
+    uint64_t applyShapes(const std::vector<vc3d::ink_labels::Shape>& shapes, vc3d::ink_labels::PaintOp op, vc3d::ink_labels::Actor actor,
+                         const QString& label);
+    // Writes the current values of `rect` (clipped to the canvas, at most
+    // 4096 x 4096) to a PNG or TIFF, without saving the labels.
+    ReadOutcome readRect(const cv::Rect& rect, ReadFormat format, const std::filesystem::path& path) const;
+    // Sets the exact label values (bits 1, 2, 4; at most kValueMask) of the
+    // rectangle at `origin`, as ink_labels.read writes them, as one undo entry.
+    uint64_t applyValues(cv::Point origin, const cv::Mat_<uint8_t>& values, vc3d::ink_labels::Actor actor, const QString& label);
     // Refuses to undo another actor's entry unless forced.
     bool undo(vc3d::ink_labels::Actor actor, bool force = false);
     bool redo(vc3d::ink_labels::Actor actor);
@@ -241,6 +267,8 @@ public:
     // message) when refused: no writable session, another assist running, or
     // no single-channel prediction for the prediction guide.
     bool fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound = std::nullopt);
+    // With an explicit paint operation instead of the panel's class and eraser.
+    bool fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound, vc3d::ink_labels::PaintOp op);
     bool suggest(std::optional<cv::Rect> bound = std::nullopt);
     bool runCleanup(vc3d::ink_labels::Cleanup kind, std::optional<cv::Rect> bound = std::nullopt);
     // Picks or unpicks the suggestion under a label pixel.
@@ -253,10 +281,25 @@ public:
     // provenance. Returns the changed pixels. With nothing picked it keeps
     // the suggestions and says how to pick.
     uint64_t acceptSuggestions();
+    uint64_t acceptSuggestions(vc3d::ink_labels::Actor actor);
     void discardSuggestions();
     // Esc: drops a running assist's result and any suggestions.
     void cancelAssist();
     [[nodiscard]] bool assistRunning() const { return _assistRunning; }
+
+    // What the last fill, suggestion or cleanup did, or why it was refused.
+    struct AssistReport {
+        QString what;
+        uint64_t changedPixels = 0;
+        bool reachedBound = false;
+        QString error;
+    };
+    // Starts an assist with `start` (fillAt, suggest or runCleanup) and runs
+    // it to completion on the calling thread, for callers that need the
+    // result now, such as the agent bridge. The work is the same as the
+    // worker's and lands the same way.
+    AssistReport runAssistNow(const std::function<bool()>& start);
+    [[nodiscard]] const AssistReport& lastAssistReport() const { return _lastAssistReport; }
     [[nodiscard]] const vc3d::ink_labels::SuggestionSet* suggestions() const
     {
         return _suggestions ? &*_suggestions : nullptr;
@@ -414,6 +457,8 @@ private:
     uint64_t applyEdit(const std::function<uint64_t(vc3d::ink_labels::EditTxn&)>& edit, vc3d::ink_labels::Actor actor,
                        const QString& label, const QString& editKind);
     bool canStartAssist(QString* why) const;
+    // A refused assist: the status message, and the report runAssistNow gives.
+    void refuseAssist(const QString& what, const QString& why);
     void startAssist(std::function<AssistResult()> work);
     void finishAssist(const AssistResult& result);
     void finishImport(const AssistResult& result);
@@ -467,6 +512,8 @@ private:
     QFuture<void> _assistFuture;
     uint64_t _assistGeneration = 0;
     bool _assistRunning = false;
+    bool _assistNow = false;
+    AssistReport _lastAssistReport;
     std::optional<vc3d::ink_labels::SuggestionSet> _suggestions;
     std::set<int> _selectedSuggestions;
 #ifdef VC_TESTING

@@ -270,6 +270,10 @@ private slots:
     void importLegacyPngPair();
     void numberedVersionsWriteAllKinds();
     void datasetEntryTargetsTheSegment();
+    void agentEditsReadBackAndUndo();
+    void agentWritesBackValues();
+    void agentAssistRunsNowAndReports();
+    void shapeCanvasOverlap();
 };
 
 void TestInkLabels::paintOpTable()
@@ -2474,6 +2478,144 @@ void TestInkLabels::datasetEntryTargetsTheSegment()
                              "seg_inklabels_vx.tif", "seg_inklabels_v3.tif.prev"})
         std::ofstream(store / name) << "x";
     QCOMPARE(listVersions(store, "seg"), (std::vector<int>{1, 2, 7}));
+}
+
+// ---------------------------------------------------------------------------
+// Agent bridge support
+// ---------------------------------------------------------------------------
+
+void TestInkLabels::agentEditsReadBackAndUndo()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(testCanvas({300, 200}), toPath(dir), "seg").ok);
+    // A user stroke, then an agent stroke through three points as one entry.
+    QVERIFY(l.labels->applyShape(disc(40, 40, 10), Actor::User) > 0);
+    const uint64_t userInk = LabelCounts::from(l.labels->session()->counts).ink;
+    const std::vector<Shape> stroke{capsule({100, 100}, {150, 100}, 4), capsule({150, 100}, {150, 150}, 4)};
+    const uint64_t changed = l.labels->applyShapes(stroke, paintOp(PaintClass::Ink, false, false), Actor::Agent, "agent ink stroke");
+    QVERIFY(changed > 0);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 2);
+    QCOMPARE(l.labels->history()->top()->actor, Actor::Agent);
+
+    // Read back: values and one bit, clipped to the canvas, with counts.
+    const fs::path values = toPath(dir) / "values.png";
+    auto out = l.labels->readRect(cv::Rect(90, 90, 80, 80), InkLabelController::ReadFormat::Values, values);
+    QVERIFY2(out.ok, qPrintable(out.error));
+    QCOMPARE(out.counts.ink, changed);
+    cv::Mat_<uint8_t> expected;
+    l.labels->raster()->readRect(cv::Rect(90, 90, 80, 80), expected);
+    QVERIFY(sameImage(readGray(values), expected));
+    const fs::path ink = toPath(dir) / "ink.tif";
+    out = l.labels->readRect(cv::Rect(280, 180, 50, 50), InkLabelController::ReadFormat::Ink, ink);
+    QVERIFY(out.ok);
+    QCOMPARE(out.rect, cv::Rect(280, 180, 20, 20));
+    QCOMPARE(readGray(ink).size(), cv::Size(20, 20));
+    QVERIFY(!l.labels->readRect(cv::Rect(400, 400, 10, 10), InkLabelController::ReadFormat::Ink, ink).ok);
+    QVERIFY(!l.labels->readRect(cv::Rect(0, 0, 5000, 10), InkLabelController::ReadFormat::Ink, ink).ok);
+
+    // An agent undo takes back its own entry, then stops at the user's
+    // unless forced.
+    QVERIFY(l.labels->undo(Actor::Agent));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QVERIFY(!l.labels->undo(Actor::Agent));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 1);
+    QVERIFY(l.labels->undo(Actor::Agent, true));
+    QCOMPARE(int(l.labels->history()->undoDepth()), 0);
+    QVERIFY(l.labels->redo(Actor::Agent));
+    QVERIFY(l.labels->redo(Actor::Agent));
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).ink, userInk + changed);
+
+    // A trainer save is visible while it runs; a checkpoint is not one.
+    QVERIFY(!l.labels->trainerSaveInFlight());
+    QFuture<SaveOutcome> save = l.labels->save();
+    QVERIFY(l.labels->trainerSaveInFlight() || save.isFinished());
+    save.waitForFinished();
+    QTRY_VERIFY(!l.labels->trainerSaveInFlight());
+}
+
+void TestInkLabels::agentWritesBackValues()
+{
+    // What ink_labels.read writes as "values" can be painted back exactly,
+    // as one undo entry, whatever was there before.
+    QTemporaryDir dir;
+    Labeler l;
+    QVERIFY(l.labels->openForTesting(testCanvas({300, 200}), toPath(dir), "seg").ok);
+    QVERIFY(l.labels->applyShape(disc(60, 60, 30), Actor::User) > 0);
+    cv::Mat_<uint8_t> values(40, 50, uint8_t(0));
+    values(cv::Rect(0, 0, 25, 40)) = uint8_t(kInk | kSupervision);
+    values(cv::Rect(25, 0, 25, 20)) = uint8_t(kSupervision);
+    values(cv::Rect(10, 30, 30, 10)) = uint8_t(kValidation);
+    const uint64_t changed = l.labels->applyValues({40, 40}, values, Actor::Agent, "agent values");
+    QVERIFY(changed > 0);
+    QCOMPARE(int(l.labels->history()->undoDepth()), 2);
+    QCOMPARE(l.labels->history()->top()->actor, Actor::Agent);
+    cv::Mat_<uint8_t> back;
+    l.labels->raster()->readRect(cv::Rect(40, 40, 50, 40), back);
+    QVERIFY(sameImage(back, values));
+    // Outside the rectangle nothing changed.
+    QCOMPARE(int(l.labels->raster()->at(35, 60)), int(kInk | kSupervision));
+    QVERIFY(l.labels->undo(Actor::Agent));
+    l.labels->raster()->readRect(cv::Rect(40, 40, 50, 40), back);
+    QCOMPARE(int(back(10, 10)), int(kInk | kSupervision));  // the user's disc again
+}
+
+void TestInkLabels::agentAssistRunsNowAndReports()
+{
+    QTemporaryDir dir;
+    Labeler l;
+    const auto canvas = vc::RenderCanvas::make({120, 80}, {1.f, 1.f}, 1.0);
+    QVERIFY(l.labels->openForTesting(canvas, toPath(dir), "seg").ok);
+    // No prediction: the refusal comes back as the report's error.
+    auto report = l.labels->runAssistNow([&] { return l.labels->suggest(cv::Rect(0, 0, 120, 80)); });
+    QVERIFY(report.error.contains(QStringLiteral("single-channel ink prediction")));
+
+    l.labels->setPredictionGuideForTesting(guideWith(canvas.size, {cv::Rect(10, 10, 30, 20), cv::Rect(70, 40, 30, 30)}));
+    // A fill with an explicit op lands at once, recorded as the agent's.
+    report = l.labels->runAssistNow(
+        [&] { return l.labels->fillAt({15, 15}, cv::Rect(0, 0, 120, 80), paintOp(PaintClass::Background, false, false)); });
+    QVERIFY2(report.error.isEmpty(), qPrintable(report.error));
+    QCOMPARE(report.changedPixels, uint64_t(30 * 20));
+    QVERIFY(!report.reachedBound);
+    QVERIFY(!l.labels->assistRunning());
+    QCOMPARE(l.labels->history()->top()->actor, Actor::Agent);
+    QCOMPARE(LabelCounts::from(l.labels->session()->counts).background, uint64_t(30 * 20));
+    // A fill cut by its bound says so.
+    report = l.labels->runAssistNow(
+        [&] { return l.labels->fillAt({75, 45}, cv::Rect(60, 30, 20, 50), paintOp(PaintClass::Validation, false, false)); });
+    QVERIFY(report.reachedBound);
+
+    // Suggestions are there at once; accepting them as the agent records it.
+    report = l.labels->runAssistNow([&] { return l.labels->suggest(cv::Rect(0, 0, 120, 80)); });
+    QVERIFY(report.error.isEmpty());
+    QVERIFY(l.labels->suggestions());
+    QCOMPARE(int(l.labels->suggestions()->items.size()), 1);  // the background block is left out
+    l.labels->pickAllSuggestions();
+    QVERIFY(l.labels->acceptSuggestions(Actor::Agent) > 0);
+    QCOMPARE(l.labels->history()->top()->actor, Actor::Agent);
+
+    // A cleanup too.
+    report = l.labels->runAssistNow([&] { return l.labels->runCleanup(Cleanup::Shrink, cv::Rect(0, 0, 120, 80)); });
+    QVERIFY(report.error.isEmpty());
+    QVERIFY(report.changedPixels > 0);
+}
+
+void TestInkLabels::shapeCanvasOverlap()
+{
+    const cv::Size size(100, 60);
+    const auto polygon = [](std::vector<cv::Point2d> pts) { return Shape{Shape::Kind::Polygon, std::move(pts), 0.0}; };
+    // Polygons have no radius: a zero-width extent must still count.
+    QCOMPARE(canvasOverlap({polygon({{10, 10}, {40, 10}, {40, 30}})}, size), CanvasOverlap::Inside);
+    QCOMPARE(canvasOverlap({polygon({{90, 10}, {140, 10}, {140, 30}})}, size), CanvasOverlap::Clipped);
+    QCOMPARE(canvasOverlap({polygon({{-50, 10}, {-10, 10}, {-10, 30}})}, size), CanvasOverlap::Outside);
+    // Discs and capsules reach out by their stamp radius.
+    QCOMPARE(canvasOverlap({disc(-2, 30, 3)}, size), CanvasOverlap::Clipped);
+    QCOMPARE(canvasOverlap({disc(-5, 30, 3)}, size), CanvasOverlap::Outside);
+    QCOMPARE(canvasOverlap({disc(50, 30, 3)}, size), CanvasOverlap::Inside);
+    QCOMPARE(canvasOverlap({capsule({-20, 30}, {120, 30}, 2)}, size), CanvasOverlap::Clipped);
+    // Several shapes are judged together; no shape covers nothing.
+    QCOMPARE(canvasOverlap({disc(-50, 30, 3), disc(50, 30, 3)}, size), CanvasOverlap::Clipped);
+    QCOMPARE(canvasOverlap({}, size), CanvasOverlap::Outside);
 }
 
 QTEST_MAIN(TestInkLabels)

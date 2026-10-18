@@ -37,6 +37,8 @@
 #include <QWidget>
 #include <QtConcurrent/QtConcurrent>
 
+#include <opencv2/imgcodecs.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -573,6 +575,14 @@ bool InkLabelController::saveInFlight() const
     return _session && _inFlight.contains(_session->storeKey());
 }
 
+bool InkLabelController::trainerSaveInFlight() const
+{
+    if (!_session)
+        return false;
+    const auto it = _inFlight.constFind(_session->storeKey());
+    return it != _inFlight.cend() && it->target == Target::Trainer;
+}
+
 // ---------------------------------------------------------------------------
 // Opening and closing
 // ---------------------------------------------------------------------------
@@ -646,6 +656,8 @@ InkLabelController::OpenOutcome InkLabelController::openForActiveSegment(const O
             if (_session->info.locked) {
                 outcome.error = OpenError::LayerLocked;
                 outcome.message = _session->info.lockReason;
+                outcome.expected = _session->info.lockExpected;
+                outcome.got = _session->info.lockGot;
             }
             return outcome;
         }
@@ -717,6 +729,8 @@ InkLabelController::OpenOutcome InkLabelController::lockLayer(std::unique_ptr<Se
 {
     session->info.locked = true;
     session->info.lockReason = reason;
+    session->info.lockExpected = expected;
+    session->info.lockGot = got;
     session->lock.reset();
     session->lockPending = false;
     out.ok = false;
@@ -1203,6 +1217,89 @@ uint64_t InkLabelController::applyMask(cv::Point origin, const cv::Mat_<uint8_t>
     return applyEdit([&](EditTxn& txn) { return txn.applyMask(origin, mask, op); }, actor, label, QStringLiteral("mask"));
 }
 
+uint64_t InkLabelController::applyShapes(const std::vector<Shape>& shapes, PaintOp op, Actor actor, const QString& label)
+{
+    const QString kind = !shapes.empty() && shapes.front().kind == Shape::Kind::Polygon ? QStringLiteral("polygon") : QStringLiteral("stroke");
+    return applyEdit(
+        [&](EditTxn& txn) {
+            uint64_t changed = 0;
+            for (const Shape& shape : shapes)
+                changed += txn.apply(shape, op);
+            return changed;
+        },
+        actor, label, kind);
+}
+
+InkLabelController::ReadOutcome InkLabelController::readRect(const cv::Rect& rect, ReadFormat format, const fs::path& path) const
+{
+    ReadOutcome out;
+    if (!_session || _session->info.locked) {
+        out.error = tr("No readable ink label session is open.");
+        return out;
+    }
+    if (rect.width > kMaxAssistWindow || rect.height > kMaxAssistWindow) {
+        out.error = tr("The rectangle is larger than %1 x %1 label px.").arg(kMaxAssistWindow);
+        return out;
+    }
+    out.rect = rect & cv::Rect(cv::Point(0, 0), _session->info.canvas.size);
+    if (out.rect.empty()) {
+        out.error = tr("The rectangle lies outside the %1 x %2 px label canvas.")
+                        .arg(_session->info.canvas.size.width)
+                        .arg(_session->info.canvas.size.height);
+        return out;
+    }
+    cv::Mat_<uint8_t> values;
+    _session->raster.readRect(out.rect, values);
+    std::array<uint64_t, 8> byValue{};
+    for (int y = 0; y < values.rows; ++y) {
+        const uint8_t* row = values.ptr(y);
+        for (int x = 0; x < values.cols; ++x)
+            ++byValue[row[x] & kValueMask];
+    }
+    out.counts = LabelCounts::from(byValue);
+    cv::Mat_<uint8_t> image;
+    if (format == ReadFormat::Values) {
+        image = values;
+    } else {
+        const uint8_t bit = format == ReadFormat::Ink ? kInk : format == ReadFormat::Supervision ? kSupervision : kValidation;
+        cv::bitwise_and(values, cv::Scalar(bit), image);
+        cv::compare(image, cv::Scalar(0), image, cv::CMP_NE);
+    }
+    try {
+        if (!cv::imwrite(path.string(), image)) {
+            out.error = tr("Cannot write %1").arg(qpath(path));
+            return out;
+        }
+    } catch (const cv::Exception& e) {
+        out.error = tr("Cannot write %1: %2").arg(qpath(path), QString::fromUtf8(e.what()));
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+uint64_t InkLabelController::applyValues(cv::Point origin, const cv::Mat_<uint8_t>& values, Actor actor, const QString& label)
+{
+    if (values.empty())
+        return 0;
+    return applyEdit(
+        [&](EditTxn& txn) {
+            // Each bit set where the image has it and cleared where it does
+            // not, all inside one transaction.
+            uint64_t changed = 0;
+            cv::Mat_<uint8_t> where;
+            for (const uint8_t bit : {kInk, kSupervision, kValidation}) {
+                cv::bitwise_and(values, cv::Scalar(bit), where);
+                cv::compare(where, cv::Scalar(0), where, cv::CMP_NE);
+                changed += txn.applyMask(origin, where, PaintOp{bit, 0});
+                cv::bitwise_not(where, where);
+                changed += txn.applyMask(origin, where, PaintOp{0, bit});
+            }
+            return changed;
+        },
+        actor, label, QStringLiteral("values"));
+}
+
 bool InkLabelController::undo(Actor actor, bool force)
 {
     if (!_session || _session->info.locked)
@@ -1447,9 +1544,14 @@ QString InkLabelController::datasetEntryText() const
 
 bool InkLabelController::importFile(const fs::path& path, const ImportOptions& options)
 {
+    return importFile(path, options, Actor::User);
+}
+
+bool InkLabelController::importFile(const fs::path& path, const ImportOptions& options, Actor actor)
+{
     QString why;
     if (!canStartAssist(&why)) {
-        statusMessage(why, 4000);
+        refuseAssist(tr("import"), why);
         return false;
     }
     finishTransaction();
@@ -1467,7 +1569,7 @@ bool InkLabelController::importFile(const fs::path& path, const ImportOptions& o
         r.baseSerial = baseSerial;
         // The edit is made on the snapshot (its tiles are cloned on write) and
         // replayed onto the live raster if nothing changed meanwhile.
-        EditTxn txn(snapshot, r.what.toStdString(), Actor::User);
+        EditTxn txn(snapshot, r.what.toStdString(), actor);
         r.import = importLabel(path, canvas, options, txn);
         if (r.import->ok)
             r.entry = txn.commit(serial);
@@ -1519,9 +1621,10 @@ void InkLabelController::finishImport(const AssistResult& result)
             rect = rect.empty() ? t : (rect | t);
         }
         HistoryEntry entry = *result.entry;
-        QJsonObject byActor = _session->edits.value(QStringLiteral("user")).toObject();
+        const QString who = actorKey(entry.actor);
+        QJsonObject byActor = _session->edits.value(who).toObject();
         byActor[QStringLiteral("import")] = byActor.value(QStringLiteral("import")).toInt() + 1;
-        _session->edits[QStringLiteral("user")] = byActor;
+        _session->edits[who] = byActor;
         _session->history.push(std::move(entry));
         _session->lastCommitMs = nowMs();
         _session->lastPoint.reset();
@@ -2066,10 +2169,38 @@ bool InkLabelController::canStartAssist(QString* why) const
     return true;
 }
 
+void InkLabelController::refuseAssist(const QString& what, const QString& why)
+{
+    _lastAssistReport = AssistReport{what, 0, false, why};
+    statusMessage(why, 4000);
+}
+
+InkLabelController::AssistReport InkLabelController::runAssistNow(const std::function<bool()>& start)
+{
+    _lastAssistReport = AssistReport{};
+    _assistNow = true;
+    const bool started = start();
+    _assistNow = false;
+    if (!started && _lastAssistReport.error.isEmpty())
+        _lastAssistReport.error = tr("The assist was refused.");
+    return _lastAssistReport;
+}
+
 void InkLabelController::startAssist(std::function<AssistResult()> work)
 {
     const uint64_t generation = ++_assistGeneration;
     const uint64_t sessionGeneration = _session ? _session->generation : 0;
+    if (_assistNow) {
+        // Same work and same landing as the worker path, on this thread.
+        AssistResult result;
+        try {
+            result = work();
+        } catch (const std::exception& e) {
+            result.error = QString::fromUtf8(e.what());
+        }
+        finishAssist(result);
+        return;
+    }
     _assistRunning = true;
     auto result = std::make_shared<AssistResult>();
     _assistFuture = QtConcurrent::run([work = std::move(work), result] {
@@ -2097,6 +2228,7 @@ void InkLabelController::startAssist(std::function<AssistResult()> work)
 
 void InkLabelController::finishAssist(const AssistResult& result)
 {
+    _lastAssistReport = AssistReport{result.what, 0, result.mask && result.mask->reachedBound, result.error};
     if (!result.error.isEmpty()) {
         statusMessage(tr("Ink labels: %1 failed: %2").arg(result.what, result.error), 6000);
         emit assistChanged();
@@ -2121,8 +2253,9 @@ void InkLabelController::finishAssist(const AssistResult& result)
     uint64_t changed = 0;
     if (result.mask && result.mask->count() > 0) {
         changed = applyEdit([&](EditTxn& txn) { return txn.applyMask(result.mask->origin, result.mask->mask, result.op); },
-                            Actor::User, result.what, result.editKind);
+                            _assistNow ? Actor::Agent : Actor::User, result.what, result.editKind);
     }
+    _lastAssistReport.changedPixels = changed;
     QString message = changed > 0 ? tr("Ink labels: %1 changed %2 px").arg(result.what).arg(changed)
                                   : tr("Ink labels: %1 changed nothing").arg(result.what);
     if (result.mask && result.mask->reachedBound)
@@ -2134,9 +2267,14 @@ void InkLabelController::finishAssist(const AssistResult& result)
 
 bool InkLabelController::fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound)
 {
+    return fillAt(labelPx, bound, currentOp());
+}
+
+bool InkLabelController::fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bound, PaintOp op)
+{
     QString why;
     if (!canStartAssist(&why)) {
-        statusMessage(why, 4000);
+        refuseAssist(tr("fill"), why);
         return false;
     }
     finishTransaction();
@@ -2144,7 +2282,7 @@ bool InkLabelController::fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bou
     if (_assist.guide == GuideKind::Prediction) {
         guide = predictionGuide();
         if (!guide) {
-            statusMessage(tr("Select a single-channel ink prediction in the Ink Detection dock to fill from it."), 5000);
+            refuseAssist(tr("fill"), tr("Select a single-channel ink prediction in the Ink Detection dock to fill from it."));
             return false;
         }
     }
@@ -2155,7 +2293,6 @@ bool InkLabelController::fillAt(cv::Point2d labelPx, std::optional<cv::Rect> bou
     flood.above = _assist.above;
     flood.unlabeledOnly = _assist.unlabeledOnly;
     const GuideKind kind = _assist.guide;
-    const PaintOp op = currentOp();
     const vc::RenderCanvas canvas = _session->info.canvas;
     const cv::Rect area = bound.value_or(defaultBound());
     TileRaster snapshot = _session->raster.snapshot();
@@ -2175,13 +2312,13 @@ bool InkLabelController::suggest(std::optional<cv::Rect> bound)
 {
     QString why;
     if (!canStartAssist(&why)) {
-        statusMessage(why, 4000);
+        refuseAssist(tr("suggestions"), why);
         return false;
     }
     finishTransaction();
     std::optional<PredictionGuide> guide = predictionGuide();
     if (!guide) {
-        statusMessage(tr("Select a single-channel ink prediction in the Ink Detection dock to get suggestions."), 5000);
+        refuseAssist(tr("suggestions"), tr("Select a single-channel ink prediction in the Ink Detection dock to get suggestions."));
         return false;
     }
     _suggestions.reset();
@@ -2206,7 +2343,7 @@ bool InkLabelController::runCleanup(Cleanup kind, std::optional<cv::Rect> bound)
 {
     QString why;
     if (!canStartAssist(&why)) {
-        statusMessage(why, 4000);
+        refuseAssist(QString::fromLatin1(cleanupName(kind)), why);
         return false;
     }
     finishTransaction();
@@ -2253,6 +2390,11 @@ void InkLabelController::setSuggestionSelected(int id, bool selected)
 
 uint64_t InkLabelController::acceptSuggestions()
 {
+    return acceptSuggestions(Actor::User);
+}
+
+uint64_t InkLabelController::acceptSuggestions(Actor actor)
+{
     if (!_suggestions)
         return 0;
     QString why;
@@ -2277,7 +2419,7 @@ uint64_t InkLabelController::acceptSuggestions()
         // a pixel the annotator labeled background into ink.
         dropSupervised(_session->raster, mask);
         changed = applyEdit([&](EditTxn& txn) { return txn.applyMask(mask.origin, mask.mask, paintOp(PaintClass::Ink, false, false)); },
-                            Actor::User, QStringLiteral("accept suggestions"), QStringLiteral("suggestion"));
+                            actor, QStringLiteral("accept suggestions"), QStringLiteral("suggestion"));
         if (changed > 0 && _session) {
             QJsonObject entry;
             entry["kind"] = QStringLiteral("suggestion");

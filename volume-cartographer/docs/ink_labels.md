@@ -209,6 +209,19 @@ uv run --extra models python -m vesuvius.ink_detection.preprocessing.validate_se
 
 Here `<store>/<seg>` is the label folder the dock shows.
 
+## Agents
+
+The VC3D agent bridge exposes the same session, with a method for every
+control of the label section (MCP tools `vc3d_ink_labels_*`): `state`,
+`open`, `paint` (strokes, polygons, masks, or exact label values),
+`read`, `history`, `save` (also as a new version), `fill`, `suggest`,
+`accept_suggestions`, `discard_suggestions`, `cleanup`, `import`,
+`versions`, `dataset_entry`, `set_tool_state` and `close`, all under
+`ink_labels.`. No method opens a dialog. Agent edits show live in the view,
+are recorded with actor `agent`, and an agent undo stops at the user's edits
+unless forced. See the "Ink labels" section of
+`apps/VC3D/agent_bridge/SPEC.md`.
+
 ## Pixel mapping
 
 Label pixel `(c, r)` covers `[c, c+1) x [r, r+1)` of the canvas of size

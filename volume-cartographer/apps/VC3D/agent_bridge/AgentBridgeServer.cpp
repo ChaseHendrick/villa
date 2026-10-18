@@ -701,6 +701,8 @@ void AgentBridgeServer::registerHandlers()
     registerFlattenHandlers();
 
     registerSurfaceOpsHandlers();
+
+    registerInkLabelHandlers();
 }
 
 

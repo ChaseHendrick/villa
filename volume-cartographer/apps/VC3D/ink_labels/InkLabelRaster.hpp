@@ -121,6 +121,12 @@ struct Shape {
     double radius = 0;
 };
 
+// Where shapes fall on a canvas of `size` label px, judged by their points
+// plus or minus the radius the stamps use (vertices only for polygons):
+// entirely inside, partly outside, or covering no canvas pixel at all.
+enum class CanvasOverlap : uint8_t { Inside, Clipped, Outside };
+[[nodiscard]] CanvasOverlap canvasOverlap(const std::vector<Shape>& shapes, cv::Size size);
+
 class TileRaster {
 public:
     explicit TileRaster(cv::Size canvas = {});

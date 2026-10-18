@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace vc3d::ink_labels {
@@ -29,6 +30,12 @@ bool finitePoint(const cv::Point2d& p)
 bool usablePoint(const cv::Point2d& p)
 {
     return finitePoint(p) && std::abs(p.x) <= kMaxShapeCoordinate && std::abs(p.y) <= kMaxShapeCoordinate;
+}
+
+// The radius a disc or capsule stamps with.
+double stampRadius(double radius)
+{
+    return std::clamp(std::isfinite(radius) ? radius : kMinRadius, kMinRadius, kMaxRadius);
 }
 
 // Bounding box of label pixels a shape may touch, before canvas clipping.
@@ -392,7 +399,7 @@ uint64_t EditTxn::apply(const Shape& shape, PaintOp op)
         });
     }
 
-    const double radius = std::clamp(std::isfinite(shape.radius) ? shape.radius : kMinRadius, kMinRadius, kMaxRadius);
+    const double radius = stampRadius(shape.radius);
     if (shape.kind == Shape::Kind::Disc) {
         const cv::Point2d c = shape.points.front();
         return applyToTiles(shapeBounds({c}, radius), op, [c, radius](cv::Mat_<uint8_t>& mask, cv::Point origin) {
@@ -417,6 +424,28 @@ uint64_t EditTxn::apply(const Shape& shape, PaintOp op)
         setPixelIfInside(mask, a, origin);
         setPixelIfInside(mask, b, origin);
     });
+}
+
+CanvasOverlap canvasOverlap(const std::vector<Shape>& shapes, cv::Size size)
+{
+    double x0 = std::numeric_limits<double>::infinity(), y0 = x0;
+    double x1 = -x0, y1 = -x0;
+    for (const Shape& shape : shapes) {
+        const double r = shape.kind == Shape::Kind::Polygon ? 0.0 : stampRadius(shape.radius);
+        for (const auto& p : shape.points) {
+            if (!finitePoint(p))
+                continue;
+            x0 = std::min(x0, p.x - r);
+            x1 = std::max(x1, p.x + r);
+            y0 = std::min(y0, p.y - r);
+            y1 = std::max(y1, p.y + r);
+        }
+    }
+    if (!(x0 <= x1) || x1 <= 0.0 || y1 <= 0.0 || x0 >= size.width || y0 >= size.height)
+        return CanvasOverlap::Outside;
+    if (x0 < 0.0 || y0 < 0.0 || x1 > size.width || y1 > size.height)
+        return CanvasOverlap::Clipped;
+    return CanvasOverlap::Inside;
 }
 
 uint64_t EditTxn::applyMask(cv::Point origin, const cv::Mat_<uint8_t>& mask, PaintOp op)

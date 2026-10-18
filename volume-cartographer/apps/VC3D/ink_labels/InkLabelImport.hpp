@@ -1,7 +1,7 @@
 #pragma once
 
 // Importing existing label images into an ink label session, and the
-// commands that hand saved labels to the ink detection trainer. GUI-free.
+// dataset entry that hands saved labels to the ink detection trainer. GUI-free.
 //
 // An import sets one label bit (ink, supervision or validation) from a file:
 // pixels above 0 get the bit, pixels at 0 lose it, matching how the trainer

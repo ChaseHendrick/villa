@@ -31,6 +31,8 @@ class QLocalServer;
 class QLocalSocket;
 class QTimer;
 class CWindow;
+class InkDetectionOverlayController;
+class InkLabelController;
 class VolumeViewerBase;
 struct CommandLaunchError;
 
@@ -87,6 +89,7 @@ private:
     void registerPointsHandlers();
     void registerSeedingHandlers();
     void registerSurfaceOpsHandlers();
+    void registerInkLabelHandlers();
     void registerMethod(AgentBridgeMethod method, Handler handler);
 
     // --- Discovery registry file (mirrors LasagnaServiceManager's
@@ -129,6 +132,26 @@ private:
 
     // --- Handlers ---
     QJsonObject handlePing(const QJsonValue& params);
+    // Ink labels (AgentBridgeHandlers_inklabels.cpp).
+    InkLabelController* inkLabelController() const;
+    const InkDetectionOverlayController* inkDetectionOverlay() const;
+    void requireInkLabelProject() const;
+    QJsonObject handleInkLabelsState(const QJsonValue& params);
+    QJsonObject handleInkLabelsOpen(const QJsonValue& params);
+    QJsonObject handleInkLabelsPaint(const QJsonValue& params);
+    QJsonObject handleInkLabelsRead(const QJsonValue& params);
+    QJsonObject handleInkLabelsHistory(const QJsonValue& params);
+    QJsonObject handleInkLabelsSave(const QJsonValue& params);
+    QJsonObject handleInkLabelsVersions(const QJsonValue& params);
+    QJsonObject handleInkLabelsDatasetEntry(const QJsonValue& params);
+    QJsonObject handleInkLabelsSetToolState(const QJsonValue& params);
+    QJsonObject handleInkLabelsClose(const QJsonValue& params);
+    QJsonObject handleInkLabelsFill(const QJsonValue& params);
+    QJsonObject handleInkLabelsSuggest(const QJsonValue& params);
+    QJsonObject handleInkLabelsAcceptSuggestions(const QJsonValue& params);
+    QJsonObject handleInkLabelsDiscardSuggestions(const QJsonValue& params);
+    QJsonObject handleInkLabelsCleanup(const QJsonValue& params);
+    QJsonObject handleInkLabelsImport(const QJsonValue& params);
     QJsonObject handleRpcDescribe(const QJsonValue& params);
     QJsonObject handleStateGet(const QJsonValue& params);
     QJsonObject handleSegmentsAttach(const QJsonValue& params);
