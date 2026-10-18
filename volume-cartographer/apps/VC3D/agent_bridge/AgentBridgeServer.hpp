@@ -87,6 +87,7 @@ private:
     void registerPointsHandlers();
     void registerSeedingHandlers();
     void registerSurfaceOpsHandlers();
+    void registerThemeHandlers();
     void registerMethod(AgentBridgeMethod method, Handler handler);
 
     // --- Discovery registry file (mirrors LasagnaServiceManager's
@@ -297,6 +298,12 @@ private:
     QJsonObject handleSegmentGenerateMask(const QJsonValue& params);
     QJsonObject handleSegmentAppendMask(const QJsonValue& params);
     QJsonObject handleSegmentMask(const QJsonValue& params, bool append);
+
+    // Themes (AgentBridgeHandlers_theme.cpp), all through ThemeManager, the
+    // same authority as View > Theme.
+    QJsonObject handleThemeList(const QJsonValue& params);
+    QJsonObject handleThemeSet(const QJsonValue& params);
+    QJsonObject handleThemeImport(const QJsonValue& params);
 
     // --- Open Data manifest acquisition ---
     // Serves the cached manifest synchronously when available and `refresh` is

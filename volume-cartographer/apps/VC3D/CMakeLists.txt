@@ -326,6 +326,7 @@ set(srcs
     agent_bridge/AgentBridgeMethods_seeding.cpp
     agent_bridge/AgentBridgeMethods_session.cpp
     agent_bridge/AgentBridgeMethods_surfaceops.cpp
+    agent_bridge/AgentBridgeMethods_theme.cpp
     agent_bridge/AgentBridgeMethods_viewer.cpp
     agent_bridge/AgentBridgeMethods_wrap.cpp
     agent_bridge/AgentBridgeCommandError.hpp
@@ -344,6 +345,7 @@ set(srcs
     agent_bridge/AgentBridgeHandlers_review.cpp
     agent_bridge/AgentBridgeHandlers_viewer.cpp
     agent_bridge/AgentBridgeHandlers_surfaceops.cpp
+    agent_bridge/AgentBridgeHandlers_theme.cpp
 )
 
 if(VC_ENABLE_TSAN OR VC_ENABLE_LSAN OR VC_ENABLE_UBSAN OR VC_ENABLE_ASAN)

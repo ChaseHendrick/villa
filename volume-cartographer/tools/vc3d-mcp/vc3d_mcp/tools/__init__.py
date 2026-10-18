@@ -21,6 +21,7 @@ from . import (  # noqa: F401  (imported for their registration side effects)
     segmentation,
     session,
     surface_ops,
+    theme,
     viewer,
     wrap,
 )

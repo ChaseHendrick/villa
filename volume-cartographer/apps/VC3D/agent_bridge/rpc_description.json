@@ -3221,6 +3221,71 @@
         "type": "object"
       }
     },
+    "theme.import": {
+      "errors": [
+        -32602,
+        -32007,
+        -32005
+      ],
+      "mcp": {
+        "tool": "vc3d_import_theme"
+      },
+      "params": {
+        "properties": {
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    "theme.list": {
+      "errors": [],
+      "mcp": {
+        "tool": "vc3d_list_themes"
+      },
+      "params": {
+        "properties": {
+          "rescan": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "theme.set": {
+      "errors": [
+        -32602,
+        -32007,
+        -32005
+      ],
+      "mcp": {
+        "tool": "vc3d_set_theme"
+      },
+      "params": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "persist": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      }
+    },
     "tracer.run_trace": {
       "errors": [
         -32602,
