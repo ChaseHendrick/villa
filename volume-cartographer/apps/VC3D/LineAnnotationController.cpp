@@ -1,4 +1,6 @@
 #include "LineAnnotationController.hpp"
+
+#include "AnnotationUmbilicus.hpp"
 #include "ProjectFiberPaths.hpp"
 #include "vc/fiber_tracer/FiberDisplay.hpp"
 
@@ -400,29 +402,6 @@ std::optional<vc3d::opendata::CoordinateIdentity> coordinateIdentityForState(
         return std::nullopt;
     return vc3d::opendata::coordinateIdentityForVolume(
         *state->vpkg(), state->currentVolumeId());
-}
-
-// The attached volume an umbilicus stamp names by store directory name, so the
-// stamp can be checked against it. Remote volumes are skipped: the check needs
-// local shape metadata.
-std::shared_ptr<Volume> attachedVolumeByStoreName(const VolumePkg& pkg,
-                                                  const std::string& storeName)
-{
-    const std::string wanted =
-        std::filesystem::path(storeName).filename().string();
-    if (wanted.empty())
-        return nullptr;
-    try {
-        for (const std::string& id : pkg.volumeIDs()) {
-            const std::shared_ptr<Volume> volume = pkg.volume(id);
-            if (!volume || volume->isRemote())
-                continue;
-            if (volume->path().filename().string() == wanted)
-                return volume;
-        }
-    } catch (...) {
-    }
-    return nullptr;
 }
 
 void copyCoordinateIdentityToJson(
@@ -7268,8 +7247,16 @@ LineAnnotationController::umbilicusForSnapshot(
     if (!_state || !_state->vpkg()) {
         return result;
     }
-    const vc::core::util::ScrollUmbilicusResolution resolved =
-        vc::core::util::resolveScrollUmbilicus(*_state->vpkg());
+    // The umbilicus may be annotated on a downsampled grid while the fibers
+    // live in the volume's level-0 source frame (PHercParis4's is x4), so its
+    // coordinates have to be brought into that frame first. Framing is the
+    // shared resolution's job (resolveAnnotationUmbilicus): the stamped-
+    // dimension test, the voxel-size fallback and the grid inference, the
+    // check of a stamp against the volume it names, and which readings may be
+    // acted on. Fiber geometry is never consulted: where the annotation
+    // happens to reach says nothing about the grid the umbilicus was drawn on.
+    const vc3d::annotation::UmbilicusResolution resolved =
+        vc3d::annotation::resolveAnnotationUmbilicus(*_state->vpkg(), frame);
     if (resolved.path.empty()) {
         result.message = QString::fromStdString(resolved.error);
         for (const auto& candidate : resolved.ambiguous) {
@@ -7287,52 +7274,13 @@ LineAnnotationController::umbilicusForSnapshot(
         return result;
     }
 
-    // The umbilicus may be annotated on a downsampled grid while the fibers
-    // live in the volume's level-0 source frame (PHercParis4's is x4), so its
-    // coordinates have to be brought into that frame first. Framing is the
-    // shared implementation's job: deriveUmbilicusScale() knows the
-    // stamped-dimension test, the voxel-size fallback and the grid inference,
-    // umbilicusStampContradiction() knows when the volume a stamp names
-    // disproves it, and decideUmbilicusLoadAction() knows which readings may
-    // be acted on. Fiber geometry is never consulted: where the annotation
-    // happens to reach says nothing about the grid the umbilicus was drawn on.
     const std::array<double, 3>& fiberGridXyz = frame.extentXyz;
-    const bool haveFiberGrid = fiberGridXyz[0] > 0.0 && fiberGridXyz[1] > 0.0 &&
-                               fiberGridXyz[2] > 0.0;
-
-    const auto derived = vc::core::util::deriveUmbilicusScale(
-        resolved.info, fiberGridXyz, frame.voxelSizeUm);
-    const auto claim = vc::core::util::umbilicusFrameClaim(resolved.info);
-
-    // A stamp naming a volume this project has can be checked against it; one
-    // it does not have merely goes unverified, which is not a contradiction.
+    const auto& derived = resolved.scale;
+    const auto& stampContradiction = resolved.stampContradiction;
     // The named volume is also what the transform.json note further down
-    // reads, so it is looked up once here.
-    std::optional<std::string> stampContradiction;
-    std::shared_ptr<Volume> stampedVolume;
-    if (resolved.info.volume && !resolved.info.volume->empty()) {
-        stampedVolume =
-            attachedVolumeByStoreName(*_state->vpkg(), *resolved.info.volume);
-        if (stampedVolume) {
-            std::array<double, 3> namedGrid{0.0, 0.0, 0.0};
-            std::optional<double> namedVoxelUm;
-            try {
-                namedGrid = {static_cast<double>(stampedVolume->sliceWidth()),
-                             static_cast<double>(stampedVolume->sliceHeight()),
-                             static_cast<double>(stampedVolume->numSlices())};
-                const double voxel = stampedVolume->voxelSize();
-                if (std::isfinite(voxel) && voxel > 0.0) {
-                    namedVoxelUm = voxel;
-                }
-            } catch (...) {
-            }
-            stampContradiction = vc::core::util::umbilicusStampContradiction(
-                resolved.info, namedGrid, namedVoxelUm);
-        }
-    }
-
-    const auto action = vc::core::util::decideUmbilicusLoadAction(
-        derived, claim, haveFiberGrid, stampContradiction.has_value());
+    // reads.
+    const std::shared_ptr<Volume>& stampedVolume = resolved.stampedVolume;
+    const auto action = resolved.action;
 
     if (stampContradiction) {
         // Refused rather than drawn with a warning beside it: whatever scale
@@ -13641,11 +13589,16 @@ LineAnnotationController::ensureScrollUmbilicusLoaded()
         _umbilicusNotice.clear();
         try {
             if (_state && _state->vpkg() && volume) {
-                // One way to find umbilicus data: the shared resolver honours the
-                // project's attachment, refuses several candidates rather than
-                // picking one, and refuses malformed frame metadata.
-                const auto resolved =
-                    vc::core::util::resolveScrollUmbilicus(*_state->vpkg());
+                // One way to find umbilicus data: the shared resolution honours
+                // the project's attachment, refuses several candidates rather
+                // than picking one, refuses malformed frame metadata, and
+                // decides how the file maps into the annotation frame. That
+                // frame comes from the cache key above, not a fresh derivation:
+                // the two must agree or the cache would record a frame the
+                // geometry was not built in.
+                const auto& frame = currentAnnotationFrame;
+                const vc3d::annotation::UmbilicusResolution resolved =
+                    vc3d::annotation::resolveAnnotationUmbilicus(*_state->vpkg(), frame);
                 if (resolved.path.empty()) {
                     if (!resolved.error.empty()) {
                         Logger()->warn("Line annotation: no usable umbilicus: {}",
@@ -13659,14 +13612,8 @@ LineAnnotationController::ensureScrollUmbilicusLoaded()
                     // Line points live in the annotation frame, so that is the
                     // frame to reach, and the dense per-slice centres have to be
                     // built at its extent rather than the volume's own.
-                    //
-                    // The frame from the cache key above, not a fresh derivation:
-                    // the two must agree or the cache would record a frame the
-                    // geometry was not built in.
-                    const auto& frame = currentAnnotationFrame;
                     const std::array<double, 3>& annotationGrid = frame.extentXyz;
-                    const auto scale = vc::core::util::deriveUmbilicusScale(
-                        resolved.info, annotationGrid, frame.voxelSizeUm);
+                    const auto& scale = resolved.scale;
 
                     // Three outcomes, not two: a file whose stated frame does
                     // not fit the target is refused rather than quietly read as
@@ -13682,41 +13629,15 @@ LineAnnotationController::ensureScrollUmbilicusLoaded()
                     // points do not fit inside any candidate grid and inference
                     // yields nothing, dropping through to the legacy reading that
                     // does handle a pose.
-                    const auto claim =
-                        vc::core::util::umbilicusFrameClaim(resolved.info);
-                    const bool haveTargetGrid = annotationGrid[2] > 0.0;
+                    const auto& claim = resolved.claim;
 
-                    // A stamp naming a volume this project has can be checked
+                    // A stamp naming a volume this project has is checked
                     // against it, and a contradicted stamp is refused outright:
                     // whatever scale was derived came from a statement the named
                     // volume disproves. One this project does not have merely
                     // goes unverified, which is not a contradiction.
-                    std::optional<std::string> stampContradiction;
-                    if (resolved.info.volume && !resolved.info.volume->empty()) {
-                        if (const auto named = attachedVolumeByStoreName(
-                                *_state->vpkg(), *resolved.info.volume)) {
-                            std::array<double, 3> namedGrid{0.0, 0.0, 0.0};
-                            std::optional<double> namedVoxelUm;
-                            try {
-                                namedGrid = {
-                                    static_cast<double>(named->sliceWidth()),
-                                    static_cast<double>(named->sliceHeight()),
-                                    static_cast<double>(named->numSlices())};
-                                const double voxel = named->voxelSize();
-                                if (std::isfinite(voxel) && voxel > 0.0) {
-                                    namedVoxelUm = voxel;
-                                }
-                            } catch (...) {
-                            }
-                            stampContradiction =
-                                vc::core::util::umbilicusStampContradiction(
-                                    resolved.info, namedGrid, namedVoxelUm);
-                        }
-                    }
-
-                    auto action = vc::core::util::decideUmbilicusLoadAction(
-                        scale, claim, haveTargetGrid,
-                        stampContradiction.has_value());
+                    const auto& stampContradiction = resolved.stampContradiction;
+                    auto action = resolved.action;
 
                     if (stampContradiction) {
                         Logger()->warn(

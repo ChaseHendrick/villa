@@ -51,6 +51,8 @@ set(srcs
     FiberSliceGeometry.cpp
     FiberSliceGeometry.hpp
     AnnotationFrame.hpp
+    AnnotationUmbilicus.cpp
+    AnnotationUmbilicus.hpp
     UmbilicusOrientationFreshness.hpp
     LineAnnotationController.cpp
     LineAnnotationController.hpp
