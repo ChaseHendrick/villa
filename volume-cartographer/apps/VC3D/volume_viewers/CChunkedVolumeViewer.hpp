@@ -27,6 +27,7 @@
 #include <opencv2/core/mat.hpp>
 
 #include "CVolumeViewerView.hpp"
+#include "PointerGate.hpp"
 #include "VolumeViewerBase.hpp"
 #include "VolumetricCompositor.hpp"
 #include "annotation_tools/SameWrapAnnotationTool.hpp"
@@ -78,6 +79,9 @@ public:
         Surface* surface = nullptr;
     };
     using ShiftScrollOverride = std::function<bool(int, QPointF, Qt::KeyboardModifiers)>;
+
+    using PointerEvent = vc3d::PointerEvent;
+    using PointerOverride = vc3d::PointerOverride;
 
     CChunkedVolumeViewer(CState* state, ViewerManager* manager, QWidget* parent = nullptr);
     ~CChunkedVolumeViewer() override;
@@ -264,6 +268,19 @@ public:
         return _displayedRenderJob ? _displayedRenderJob->surfaceGeometryEpoch : 0;
     }
     void setShiftScrollOverride(ShiftScrollOverride override) { _shiftScrollOverride = std::move(override); }
+    // One pointer tool at a time. Setting it cancels an owned gesture first.
+    void setPointerOverride(PointerOverride override)
+    {
+        cancelPointerGesture();
+        _pointerOverride = std::move(override);
+    }
+    bool hasPointerOverride() const { return static_cast<bool>(_pointerOverride); }
+    void cancelPointerGesture()
+    {
+        if (_pointerGate.owned()) {
+            _pointerGate.offerCancel(_pointerOverride);
+        }
+    }
     // Accept linked-cursor points regardless of the global "Sync cursor across
     // views" toggle (used by the line annotation window's pane group, whose
     // mirroring is dialog-local).
@@ -786,6 +803,8 @@ private:
     // the status-bar position readout (never used for click/hit-test paths).
     std::optional<cv::Vec3f> _linkedCursorVolumePos;
     ShiftScrollOverride _shiftScrollOverride;
+    PointerOverride _pointerOverride;
+    vc3d::PointerGate _pointerGate;
 
     std::vector<ViewerOverlayControllerBase::PathPrimitive> _drawingPaths;
     std::unordered_map<std::string, std::vector<QGraphicsItem*>> _overlayGroups;

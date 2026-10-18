@@ -3,6 +3,7 @@
 #include <atomic>
 
 #include "CState.hpp"
+#include "Keybinds.hpp"
 #include "elements/DownloadQueueDebugOverlay.hpp"
 #include "elements/DownloadQueueStats.hpp"
 #include "CameraGizmoWidget.hpp"
@@ -576,6 +577,24 @@ std::shared_ptr<vc::render::ChunkCache> sharedOverlayChunkCacheForVolume(
     return volume->sharedChunkCache();
 }
 
+CChunkedVolumeViewer::PointerEvent makePointerEvent(
+    CChunkedVolumeViewer::PointerEvent::Kind kind,
+    const QPointF& scenePos,
+    const cv::Vec3f& volumePos,
+    Qt::MouseButton button,
+    Qt::MouseButtons buttons,
+    Qt::KeyboardModifiers modifiers)
+{
+    CChunkedVolumeViewer::PointerEvent event;
+    event.kind = kind;
+    event.scenePos = scenePos;
+    event.volumePos = volumePos;
+    event.button = button;
+    event.buttons = buttons;
+    event.modifiers = modifiers;
+    return event;
+}
+
 } // namespace
 
 struct CChunkedVolumeViewer::GeneratedSurfaceCache {
@@ -640,6 +659,12 @@ CChunkedVolumeViewer::CChunkedVolumeViewer(CState* state, ViewerManager* manager
                     volumePos = *cursorPos;
                 } else {
                     volumePos = sceneToVolume(scenePos);
+                }
+                if (_pointerGate.offerPress(
+                        _pointerOverride,
+                        makePointerEvent(PointerEvent::Kind::DoubleClick, scenePos, volumePos, button, button, modifiers)) ||
+                    _pointerGate.owned()) {
+                    return;
                 }
                 emit sendMouseDoubleClickVolume(volumePos, button, modifiers);
             });
@@ -4352,6 +4377,11 @@ void CChunkedVolumeViewer::onPanRelease(Qt::MouseButton, Qt::KeyboardModifiers)
 
 void CChunkedVolumeViewer::onVolumeClicked(QPointF scenePos, Qt::MouseButton button, Qt::KeyboardModifiers modifiers)
 {
+    // Runs before onMouseRelease for the same release, so a gesture the
+    // pointer override consumed is still owned here.
+    if (_pointerGate.swallowClick()) {
+        return;
+    }
     if (_sameWrapAnnotation.enabled() && button == Qt::LeftButton && modifiers.testFlag(Qt::ShiftModifier)) {
         if (_sameWrapAnnotation.manualPathType()) {
             return;
@@ -4541,6 +4571,21 @@ void CChunkedVolumeViewer::onMousePress(QPointF scenePos, Qt::MouseButton button
         return;
     }
 
+    // A canceled gesture is offered too, so a later press or a move without
+    // the left button ends it even after its override was removed.
+    if ((_pointerOverride || _pointerGate.swallowClick()) &&
+        _pointerGate.offerPress(
+            _pointerOverride,
+            makePointerEvent(
+                PointerEvent::Kind::Press,
+                scenePos,
+                _lastCursorVolumePos ? *_lastCursorVolumePos : sceneToVolume(scenePos),
+                button,
+                button,
+                modifiers))) {
+        return;
+    }
+
     if (_sameWrapAnnotation.enabled() && button == Qt::RightButton &&
         modifiers.testFlag(Qt::ShiftModifier)) {
         if (const auto hit = pointAtScenePosition(scenePos)) {
@@ -4647,6 +4692,21 @@ void CChunkedVolumeViewer::onMouseMove(QPointF scenePos, Qt::MouseButtons button
         emit overlaysUpdated();
     }
 
+    // A canceled gesture is offered too, so a later press or a move without
+    // the left button ends it even after its override was removed.
+    if ((_pointerOverride || _pointerGate.swallowClick()) &&
+        _pointerGate.offerMove(
+            _pointerOverride,
+            makePointerEvent(
+                PointerEvent::Kind::Move,
+                scenePos,
+                _lastCursorVolumePos ? *_lastCursorVolumePos : sceneToVolume(scenePos),
+                Qt::NoButton,
+                buttons,
+                modifiers))) {
+        return;
+    }
+
     if (_sameWrapManualPathDragActive && (buttons & Qt::LeftButton)) {
         _sameWrapAnnotation.appendManualPreview(
             scenePos,
@@ -4690,6 +4750,17 @@ void CChunkedVolumeViewer::onMouseRelease(QPointF scenePos, Qt::MouseButton butt
     updateStatusLabel();
     if (_viewerManager) {
         _viewerManager->broadcastLinkedCursor(this, _lastCursorVolumePos);
+    }
+    if (_pointerGate.offerRelease(
+            _pointerOverride,
+            makePointerEvent(
+                PointerEvent::Kind::Release,
+                scenePos,
+                _lastCursorVolumePos ? *_lastCursorVolumePos : sceneToVolume(scenePos),
+                button,
+                Qt::NoButton,
+                modifiers))) {
+        return;
     }
     if (_sameWrapManualMergePressConsumed && button == Qt::RightButton) {
         _sameWrapManualMergePressConsumed = false;
@@ -4743,6 +4814,11 @@ void CChunkedVolumeViewer::onKeyPress(int key, Qt::KeyboardModifiers)
 {
     if (key == Qt::Key_Escape && isMeasurementActive()) {
         clearMeasurement();
+        return;
+    }
+    // Esc reaches the pointer tool here: with scroll panning disabled the view
+    // accepts Esc itself, so CWindow::keyPressEvent never sees it.
+    if (key == vc3d::keybinds::keypress::CancelOperation.key && _pointerGate.offerCancel(_pointerOverride)) {
         return;
     }
 
