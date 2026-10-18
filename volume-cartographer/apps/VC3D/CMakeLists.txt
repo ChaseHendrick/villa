@@ -26,6 +26,7 @@ set(srcs
     RenderBenchReplay.hpp
     FileWatcherService.cpp
     FileWatcherService.hpp
+    FileHash.hpp
     AxisAlignedSliceController.cpp
     AxisAlignedSliceController.hpp
     LineAnnotationFiberClassification.hpp
