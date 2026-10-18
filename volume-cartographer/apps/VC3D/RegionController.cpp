@@ -369,7 +369,7 @@ RegionController::Result RegionController::checkCompiles(const regions::Region& 
     return result;
 }
 
-RegionController::Result RegionController::create(regions::Region draft)
+RegionController::Result RegionController::create(regions::Region draft, bool dryRun)
 {
     syncDirectory();
     Result result;
@@ -407,12 +407,14 @@ RegionController::Result RegionController::create(regions::Region draft)
     if (result = checkCompiles(draft); !result.ok()) {
         return result;
     }
-    result = _store.create(std::move(draft));
-    emitChanged(result);
+    result = _store.create(std::move(draft), dryRun);
+    if (!dryRun) {
+        emitChanged(result);
+    }
     return result;
 }
 
-RegionController::Result RegionController::update(regions::Region next, std::optional<std::uint64_t> expectedRevision)
+RegionController::Result RegionController::update(regions::Region next, std::optional<std::uint64_t> expectedRevision, bool dryRun)
 {
     syncDirectory();
     if (const regions::Loaded* existing = find(QString::fromStdString(next.id)); existing && !existing->readOnly) {
@@ -428,12 +430,16 @@ RegionController::Result RegionController::update(regions::Region next, std::opt
         regions::Region framed = next;
         framed.frame = existing->region.frame;
         if (Result compiles = checkCompiles(framed); !compiles.ok()) {
-            emit statusMessage(compiles.message, 6000);
+            if (!dryRun) {
+                emit statusMessage(compiles.message, 6000);
+            }
             return compiles;
         }
     }
-    Result result = _store.update(std::move(next), expectedRevision);
-    emitChanged(result);
+    Result result = _store.update(std::move(next), expectedRevision, dryRun);
+    if (!dryRun) {
+        emitChanged(result);
+    }
     return result;
 }
 

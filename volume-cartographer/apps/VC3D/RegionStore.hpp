@@ -60,12 +60,14 @@ public:
     const Loaded* find(const std::string& id) const;
 
     // `region` must carry everything but revision and modified, which the
-    // store sets (revision 1). The id must be new.
-    Result create(Region region);
+    // store sets (revision 1). The id must be new. A dry run makes every check
+    // a save makes, returns the region as it would be written, and writes
+    // nothing.
+    Result create(Region region, bool dryRun = false);
     // Replaces the region with the same id. Server-owned fields (author,
     // created, frame) are kept from the stored copy; the revision becomes the
     // stored one plus 1. `expectedRevision`, when given, must match.
-    Result update(Region next, std::optional<std::uint64_t> expectedRevision);
+    Result update(Region next, std::optional<std::uint64_t> expectedRevision, bool dryRun = false);
     // Moves the file to the trash folder.
     Result remove(const std::string& id, std::optional<std::uint64_t> expectedRevision);
 

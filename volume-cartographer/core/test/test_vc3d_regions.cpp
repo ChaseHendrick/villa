@@ -565,6 +565,26 @@ TEST_CASE("Region store writes, refuses stale revisions and trashes")
         CHECK(regions::boxOf(store.find("region-1")->region)->max[2] == 70);
         CHECK(store.find("region-1")->region.name == "renamed");
     }
+    SUBCASE("a dry run checks like a save and writes nothing")
+    {
+        regions::Region next = created.region.value();
+        regions::boxOf(next)->max[2] = 70;
+        const auto preview = store.update(next, 1, /*dryRun=*/true);
+        REQUIRE(preview.ok());
+        CHECK(preview.region->revision == 2);
+        CHECK(readFile(file) == firstBytes);
+        CHECK(store.find("region-1")->region.revision == 1);
+        CHECK(store.update(next, 7, true).code == regions::Code::Conflict);
+        regions::boxOf(next)->max[0] = 1000;
+        CHECK(store.update(next, 1, true).param == QStringLiteral("shape.max.x"));
+        regions::Region fresh = testRegion("region-2");
+        const auto created2 = store.create(fresh, /*dryRun=*/true);
+        REQUIRE(created2.ok());
+        CHECK(created2.region->revision == 1);
+        CHECK_FALSE(fs::exists(store.fileFor("region-2")));
+        CHECK(store.find("region-2") == nullptr);
+        CHECK(store.create(testRegion(), true).code == regions::Code::Conflict);
+    }
     SUBCASE("delete moves the file to the trash")
     {
         const auto removed = store.remove("region-1", 1);

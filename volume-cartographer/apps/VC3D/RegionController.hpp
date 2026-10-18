@@ -65,10 +65,11 @@ public:
     std::optional<vc3d::regions::FrameMap> currentMap() const;
     QString currentVolumeId() const;
 
-    // Fills id, author, created, color, name and frame when empty. A ray arc
-    // must compile over its frame.
-    Result create(vc3d::regions::Region draft);
-    Result update(vc3d::regions::Region next, std::optional<std::uint64_t> expectedRevision);
+    // Fills id, author, created, color, name and frame when empty. A dry run
+    // makes every check a save makes (a ray arc must compile) and returns the
+    // region as it would be written, without writing it.
+    Result create(vc3d::regions::Region draft, bool dryRun = false);
+    Result update(vc3d::regions::Region next, std::optional<std::uint64_t> expectedRevision, bool dryRun = false);
     // Moves the region file (and its saved statistics) to the regions
     // folder's .trash.
     Result remove(const QString& id, std::optional<std::uint64_t> expectedRevision);

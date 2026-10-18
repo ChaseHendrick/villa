@@ -280,7 +280,7 @@ Result RegionStore::checkWritable(const std::string& id, std::optional<std::uint
     return {};
 }
 
-Result RegionStore::create(Region region)
+Result RegionStore::create(Region region, bool dryRun)
 {
     if (_directory.empty()) {
         return make(Code::NoProject, noProjectMessage());
@@ -295,6 +295,11 @@ Result RegionStore::create(Region region)
     }
     if (find(region.id)) {
         return make(Code::Conflict, QStringLiteral("A region with id %1 already exists").arg(QString::fromStdString(region.id)), QStringLiteral("id"));
+    }
+    if (dryRun) {
+        Result result;
+        result.region = std::move(region);
+        return result;
     }
     std::error_code ec;
     fs::create_directories(_directory, ec);
@@ -318,7 +323,7 @@ Result RegionStore::create(Region region)
     return result;
 }
 
-Result RegionStore::update(Region next, std::optional<std::uint64_t> expectedRevision)
+Result RegionStore::update(Region next, std::optional<std::uint64_t> expectedRevision, bool dryRun)
 {
     if (Result check = checkWritable(next.id, expectedRevision, true); !check.ok()) {
         return check;
@@ -332,6 +337,11 @@ Result RegionStore::update(Region next, std::optional<std::uint64_t> expectedRev
     next.modified = _clock();
     if (const auto problem = validateRegion(next)) {
         return make(Code::Invalid, QString::fromStdString(problem->first + ": " + problem->second), QString::fromStdString(problem->first));
+    }
+    if (dryRun) {
+        Result result;
+        result.region = std::move(next);
+        return result;
     }
     Lock lock(_directory, _lockTimeoutMs);
     if (!lock.locked()) {
