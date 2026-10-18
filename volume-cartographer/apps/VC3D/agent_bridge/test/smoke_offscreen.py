@@ -296,10 +296,10 @@ def check_rpc_describe(
         coverage = description.get("coverage", {})
         complete = (
             description.get("undocumented") == []
-            and coverage.get("described") == 120
-            and coverage.get("registered") == 120
+            and coverage.get("described") == 121
+            and coverage.get("registered") == 121
             and coverage.get("complete") is True
-            and len(snapshot["methods"]) == 120
+            and len(snapshot["methods"]) == 121
         )
         rendered = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
         if update_snapshot:
@@ -358,6 +358,39 @@ def check_rpc_describe(
         {"requiredTags": None, "excludedTags": None},
     )
     results.record("atlas_null_tag_filters", ok, detail)
+
+
+COMMAND_KEYS = {
+    "id", "title", "category", "shortcut", "checkable", "checked", "enabled",
+}
+
+
+def check_commands(client: BridgeClient, results: Results) -> None:
+    """command.list returns the catalog the Ctrl+K palette shows."""
+    try:
+        listed, _ = client.call("command.list", {}, timeout=RPC_TIMEOUT)
+        entries = listed.get("commands", [])
+        commands = {entry["id"]: entry for entry in entries}
+        palette = commands.get("command_palette", {})
+        bbox = commands.get("draw_bbox", {})
+        panels = {command_id for command_id in commands if command_id.startswith("panel.")}
+        ok = (
+            len(commands) == len(entries)
+            and all(set(entry) == COMMAND_KEYS for entry in entries)
+            and palette.get("shortcut") == "Ctrl+K"
+            and palette.get("checked") is None
+            and commands.get("zoom_in", {}).get("shortcut") is not None
+            and bbox.get("checkable") is True
+            and isinstance(bbox.get("checked"), bool)
+            and {"panel.volumes", "panel.segmentation"} <= panels
+        )
+        results.record(
+            "command_list",
+            ok,
+            f"commands={len(entries)} panels={sorted(panels)} palette={palette}",
+        )
+    except Exception as error:  # noqa: BLE001
+        results.record("command_list", False, f"{type(error).__name__}: {error}")
 
 
 def check_viewer_normalization(client: BridgeClient, results: Results) -> None:
@@ -1807,6 +1840,7 @@ def main() -> int:
             check_viewer_normalization(client, results)
             require_running(proc, results, "viewer normalization")
             check_canvas_normalization(client, results)
+            check_commands(client, results)
 
             check_volume_attach(client, results, tmp_path, volpkg)
             check_segments_attach(client, results, tmp_path, volpkg)

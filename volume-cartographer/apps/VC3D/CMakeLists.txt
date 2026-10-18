@@ -315,6 +315,7 @@ set(srcs
     agent_bridge/AgentBridgeMethod.hpp
     agent_bridge/AgentBridgeMethods_atlas.cpp
     agent_bridge/AgentBridgeMethods_canvas.cpp
+    agent_bridge/AgentBridgeMethods_command.cpp
     agent_bridge/AgentBridgeMethods_editing.cpp
     agent_bridge/AgentBridgeMethods_fiber.cpp
     agent_bridge/AgentBridgeMethods_flatten.cpp
@@ -326,10 +327,13 @@ set(srcs
     agent_bridge/AgentBridgeMethods_surfaceops.cpp
     agent_bridge/AgentBridgeMethods_viewer.cpp
     agent_bridge/AgentBridgeMethods_wrap.cpp
+    agent_bridge/AgentBridgeCommandCatalog.cpp
+    agent_bridge/AgentBridgeCommandCatalog.hpp
     agent_bridge/AgentBridgeCommandError.hpp
     agent_bridge/AgentBridgeInternal.hpp
     agent_bridge/AgentBridgeJobs.cpp
     agent_bridge/AgentBridgeHandlers_catalog.cpp
+    agent_bridge/AgentBridgeHandlers_command.cpp
     agent_bridge/AgentBridgeHandlers_session.cpp
     agent_bridge/AgentBridgeHandlers_editing.cpp
     agent_bridge/AgentBridgeHandlers_wrap.cpp

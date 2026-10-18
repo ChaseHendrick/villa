@@ -686,6 +686,7 @@ void AgentBridgeServer::registerHandlers()
         },
         [this](const QJsonValue& p) { return handleRpcDescribe(p); });
     registerSessionHandlers();
+    registerCommandHandlers();
     registerCanvasHandlers();
     registerViewerHandlers();
     registerEditingHandlers();

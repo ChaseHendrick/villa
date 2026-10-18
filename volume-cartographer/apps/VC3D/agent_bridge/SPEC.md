@@ -346,6 +346,24 @@ values may be finite floats or null where the method declares clearing.
 Metadata and tags are idempotent setters. Save/load methods use explicit paths
 and never open file pickers.
 
+### Commands
+
+`command.list` returns the command catalog, the list the Ctrl+K command
+palette shows: menu actions, application-wide keyboard shortcuts, and status
+bar panels, in catalog order. Each entry has `id`, `title`, `category`,
+`shortcut` (portable text such as `Ctrl+K`, or null), `checkable`, `checked`
+(null unless checkable), and `enabled`.
+
+- Ids are keybind ids from `Keybinds.cpp` (`zoom_in`, `reset_view`),
+  snake_case menu ids (`draw_bbox`, `reset_segmentation_views`), and
+  `panel.<name>` for status bar panels. A panel's name is its dock's object
+  name in snake_case without a `dockWidget` prefix or a `Dock` suffix:
+  `panel.volumes`, `panel.viewer_controls`, and `panel.las_ctl_diff` for the
+  Atlas control points dock, whose object name is `las-ctl-diff`.
+- The method is read-only. It tells an agent what a person can run from the
+  menus, the palette, and the keyboard, and with which keys; agents act
+  through the typed methods.
+
 ### Lasagna, atlas, and fibers
 
 - Lasagna service and job queries use deferred responses from the service
@@ -470,6 +488,7 @@ is the sole bridge method without an MCP tool.
 | `vc3d_lasagna_service_status` | `lasagna.service_status` |
 | `vc3d_lasagna_start_optimization` | `lasagna.start_optimization` |
 | `vc3d_list_catalog_samples` | `catalog.list_samples` | List samples available to open from the Open Data catalog; use this for discovery when no volume package is loaded. |
+| `vc3d_list_commands` | `command.list` | List the commands the Ctrl+K palette shows (menu actions, application-wide shortcuts, status bar panels) with ids, keys, and checked and enabled state. Read-only. |
 | `vc3d_list_overlay_volumes` | `viewer.list_overlay_volumes` | List every volume id in the open package and the active workspace's selection. |
 | `vc3d_list_points` | `points.list` | List point collections and their points. |
 | `vc3d_list_segments` | `segments.list` | List segments in the open volume package with loaded/active flags. |

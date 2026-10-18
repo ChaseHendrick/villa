@@ -75,6 +75,7 @@ private:
 
     void registerHandlers();
     void registerSessionHandlers();
+    void registerCommandHandlers();
     void registerCanvasHandlers();
     void registerEditingHandlers();
     void registerFlattenHandlers();
@@ -131,6 +132,8 @@ private:
     QJsonObject handlePing(const QJsonValue& params);
     QJsonObject handleRpcDescribe(const QJsonValue& params);
     QJsonObject handleStateGet(const QJsonValue& params);
+    // The window's command catalog (AgentBridgeHandlers_command.cpp).
+    QJsonObject handleCommandList(const QJsonValue& params);
     QJsonObject handleSegmentsAttach(const QJsonValue& params);
     QJsonObject handleSegmentsList(const QJsonValue& params);
     QJsonObject handleSegmentsActivate(const QJsonValue& params);

@@ -596,6 +596,18 @@
         "type": "object"
       }
     },
+    "command.list": {
+      "errors": [
+        -32010
+      ],
+      "mcp": {
+        "tool": "vc3d_list_commands"
+      },
+      "params": {
+        "properties": {},
+        "type": "object"
+      }
+    },
     "fiber.create_atlas": {
       "errors": [
         -32602,
