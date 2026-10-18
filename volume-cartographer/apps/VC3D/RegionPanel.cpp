@@ -32,6 +32,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <filesystem>
 #include <cmath>
 #include <limits>
 
@@ -143,13 +144,41 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
     _depth->setRange(1, 4096);
     _depth->setSuffix(tr(" vx"));
     _depth->setToolTip(tr("Depth of a new box along the view's normal, in annotation voxels, centered on the slice."));
+    _arcTool = new QToolButton(content);
+    _arcTool->setText(tr("Ray Arc"));
+    _arcTool->setCheckable(true);
     tools->addWidget(_boxTool);
+    tools->addWidget(_arcTool);
     tools->addWidget(_editTool);
     tools->addSpacing(8);
     tools->addWidget(new QLabel(tr("Depth"), content));
     tools->addWidget(_depth);
     tools->addStretch(1);
     layout->addLayout(tools);
+
+    _arcOptions = new QWidget(content);
+    auto* arcOptionsLayout = new QVBoxLayout(_arcOptions);
+    arcOptionsLayout->setContentsMargins(0, 0, 0, 0);
+    auto* arcOptions = new QHBoxLayout();
+    _arcDirection = new QComboBox(_arcOptions);
+    _arcDirection->addItem(tr("Increasing theta"), true);
+    _arcDirection->addItem(tr("Decreasing theta"), false);
+    _arcDirection->setToolTip(
+        tr("Arc direction: from the first click to the second in increasing or decreasing angle. "
+           "While Ray Arc or Edit is on, the XY view marks the umbilicus and the theta = 0 ray."));
+    _arcSeam = new QComboBox(_arcOptions);
+    for (const char* seam : {"+x", "-x", "+y", "-y"}) {
+        _arcSeam->addItem(tr("Seam %1").arg(QString::fromLatin1(seam)), QString::fromLatin1(seam));
+    }
+    _arcSeam->setToolTip(tr("Direction theta = 0 points to, from the umbilicus, for new ray arcs"));
+    arcOptions->addWidget(_arcDirection, 1);
+    arcOptions->addWidget(_arcSeam);
+    arcOptionsLayout->addLayout(arcOptions);
+    _umbilicusLabel = new QLabel(_arcOptions);
+    _umbilicusLabel->setWordWrap(true);
+    _umbilicusLabel->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    arcOptionsLayout->addWidget(_umbilicusLabel);
+    layout->addWidget(_arcOptions);
 
     _list = new QTreeWidget(content);
     _list->setColumnCount(3);
@@ -185,6 +214,7 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
 
     _details = new QWidget(content);
     auto* form = new QFormLayout(_details);
+    _detailsForm = form;
     form->setContentsMargins(0, 0, 0, 0);
     auto* nameRow = new QHBoxLayout();
     _name = new QLineEdit(_details);
@@ -212,6 +242,56 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
     boundsGrid->setContentsMargins(0, 0, 0, 0);
     _boundsRow->setLayout(boundsGrid);
     form->addRow(tr("Bounds"), _boundsRow);
+
+    _arcRow = new QWidget(_details);
+    auto* arcGrid = new QGridLayout(_arcRow);
+    arcGrid->setContentsMargins(0, 0, 0, 0);
+    const auto degrees = [this](double max) {
+        auto* spin = new QDoubleSpinBox(_arcRow);
+        spin->setRange(0.0, max);
+        spin->setDecimals(2);
+        spin->setSuffix(tr(" deg"));
+        spin->setKeyboardTracking(false);
+        return spin;
+    };
+    const auto voxels = [this]() {
+        auto* spin = new QDoubleSpinBox(_arcRow);
+        spin->setRange(0.0, 1e7);
+        spin->setDecimals(2);
+        spin->setKeyboardTracking(false);
+        return spin;
+    };
+    _arcStart = degrees(359.99);
+    _arcStart->setWrapping(true);
+    _arcStart->setPrefix(tr("from "));
+    _arcSweep = degrees(360.0);
+    _arcSweep->setMinimum(0.1);
+    _arcSweep->setPrefix(tr("sweep "));
+    _arcRadiusMin = voxels();
+    _arcRadiusMax = voxels();
+    _arcZMin = new QSpinBox(_arcRow);
+    _arcZMax = new QSpinBox(_arcRow);
+    for (auto* spin : {_arcZMin, _arcZMax}) {
+        spin->setRange(0, std::numeric_limits<int>::max());
+        spin->setKeyboardTracking(false);
+    }
+    arcGrid->addWidget(new QLabel(tr("theta"), _arcRow), 0, 0);
+    arcGrid->addWidget(_arcStart, 0, 1);
+    arcGrid->addWidget(_arcSweep, 0, 2);
+    arcGrid->addWidget(new QLabel(tr("r"), _arcRow), 1, 0);
+    arcGrid->addWidget(_arcRadiusMin, 1, 1);
+    arcGrid->addWidget(_arcRadiusMax, 1, 2);
+    arcGrid->addWidget(new QLabel(tr("z"), _arcRow), 2, 0);
+    arcGrid->addWidget(_arcZMin, 2, 1);
+    arcGrid->addWidget(_arcZMax, 2, 2);
+    _refreshUmbilicus = new QPushButton(tr("Refresh umbilicus"), _arcRow);
+    _refreshUmbilicus->setToolTip(tr("Embed the project's current umbilicus in this arc (its voxels follow the new centers)"));
+    arcGrid->addWidget(_refreshUmbilicus, 3, 1, 1, 2);
+    _arcStart->setToolTip(tr("Start angle from the seam, toward +y"));
+    _arcSweep->setToolTip(tr("Sweep (0.1 to 360 degrees)"));
+    _arcRadiusMin->setToolTip(tr("Inner radius: XY distance from the umbilicus, annotation voxels"));
+    _arcRadiusMax->setToolTip(tr("Outer radius (at least 1 voxel beyond the inner one)"));
+    form->addRow(tr("Arc"), _arcRow);
 
     _info = new QLabel(_details);
     _info->setWordWrap(true);
@@ -305,6 +385,32 @@ RegionPanel::RegionPanel(RegionController* regions, QWidget* parent) : QDockWidg
             return;
         }
         _regions->setTool(on ? RegionController::Tool::Box : RegionController::Tool::None);
+    });
+    connect(_arcTool, &QToolButton::toggled, this, [this](bool on) {
+        if (_populating) {
+            return;
+        }
+        _regions->setTool(on ? RegionController::Tool::RayArc : RegionController::Tool::None);
+    });
+    connect(_arcDirection, qOverload<int>(&QComboBox::activated), this, [this](int) {
+        _regions->setArcIncreasing(_arcDirection->currentData().toBool());
+    });
+    connect(_arcSeam, qOverload<int>(&QComboBox::activated), this, [this](int) { _regions->setArcSeam(_arcSeam->currentData().toString()); });
+    for (auto* spin : {_arcStart, _arcSweep, _arcRadiusMin, _arcRadiusMax}) {
+        connect(spin, &QDoubleSpinBox::editingFinished, this, &RegionPanel::applyArc);
+    }
+    for (auto* spin : {_arcZMin, _arcZMax}) {
+        connect(spin, &QSpinBox::editingFinished, this, &RegionPanel::applyArc);
+    }
+    connect(_refreshUmbilicus, &QPushButton::clicked, this, [this]() {
+        const regions::Loaded* loaded = _regions->find(_regions->activeId());
+        if (!loaded) {
+            return;
+        }
+        const auto result = _regions->refreshUmbilicus(_regions->activeId(), loaded->region.revision);
+        if (!result.ok()) {
+            showError(result.message);
+        }
     });
     connect(_editTool, &QToolButton::toggled, this, [this](bool on) {
         if (_populating) {
@@ -631,10 +737,29 @@ void RegionPanel::refreshTools()
     }
     const QString reason = _regions->unavailableReason();
     _populating = true;
+    const auto& umbilicus = _regions->umbilicus();
     _boxTool->setEnabled(reason.isEmpty());
     _editTool->setEnabled(reason.isEmpty());
+    _arcTool->setEnabled(reason.isEmpty() && umbilicus.available);
+    _arcTool->setToolTip(
+        umbilicus.available ? tr("Click two opposite corners of an arc around the umbilicus in the XY view; "
+                                 "its depth is set beside. Esc cancels.\n%1")
+                                  .arg(umbilicus.message)
+                            : tr("No umbilicus: File > Attach Umbilicus...\n%1").arg(umbilicus.message));
+    _umbilicusLabel->setText(umbilicus.message);
+    _umbilicusLabel->setToolTip(
+        umbilicus.available ? tr("Scale x%1 (%2): %3")
+                                  .arg(umbilicus.ref.scale, 0, 'g', 6)
+                                  .arg(QString::fromStdString(umbilicus.ref.scaleSource), QString::fromStdString(umbilicus.ref.sourcePath))
+                            : QString());
+    // The arc options matter only while drawing or showing a ray arc.
+    const regions::Loaded* active = _regions->find(_regions->activeId());
+    _arcOptions->setVisible(reason.isEmpty() && (_regions->tool() == RegionController::Tool::RayArc || (active && regions::arcOf(active->region))));
     _boxTool->setChecked(_regions->tool() == RegionController::Tool::Box);
+    _arcTool->setChecked(_regions->tool() == RegionController::Tool::RayArc);
     _editTool->setChecked(_regions->editing());
+    _arcDirection->setCurrentIndex(_regions->arcIncreasing() ? 0 : 1);
+    _arcSeam->setCurrentIndex(std::max(0, _arcSeam->findData(_regions->arcSeam())));
     _depth->setValue(_regions->newBoxDepth());
     _populating = false;
     if (!reason.isEmpty()) {
@@ -680,9 +805,11 @@ void RegionPanel::refreshList()
         item->setIcon(0, swatch(QString::fromStdString(region.color)));
         if (const regions::Box* box = regions::boxOf(region)) {
             item->setText(1, QStringLiteral("%1 x %2 x %3").arg(box->max[0] - box->min[0] + 1).arg(box->max[1] - box->min[1] + 1).arg(box->max[2] - box->min[2] + 1));
+        } else if (const regions::RayArc* arc = regions::arcOf(region)) {
+            item->setText(1, tr("%1 deg x %2 r x %3 z").arg(arc->thetaSweepDeg, 0, 'f', 1).arg(arc->radiusMax - arc->radiusMin, 0, 'f', 0).arg(arc->zMax - arc->zMin + 1));
         }
         item->setText(2, QString::number(region.revision));
-        QString tooltip = QString::fromStdString(regions::describeBox(region.shape));
+        QString tooltip = QString::fromStdString(regions::describeShape(region.shape));
         const regions::FrameCheck check = _regions->frameCheck(region);
         if (!check.map || loaded.readOnly) {
             for (int column = 0; column < 3; ++column) {
@@ -733,11 +860,21 @@ void RegionPanel::refreshDetails()
     const regions::FrameCheck check = have ? _regions->frameCheck(loaded->region) : regions::FrameCheck{};
     const bool editable = have && !loaded->readOnly && check.map.has_value();
     _details->setEnabled(have);
-    for (QWidget* w : std::initializer_list<QWidget*>{_name, _color}) {
+    for (QWidget* w : std::initializer_list<QWidget*>{_name, _color, _arcStart, _arcSweep, _arcRadiusMin, _arcRadiusMax, _arcZMin, _arcZMax}) {
         w->setEnabled(editable);
     }
     for (auto* spin : _bounds) {
         spin->setEnabled(editable);
+    }
+    _refreshUmbilicus->setEnabled(editable && _regions->umbilicus().available);
+    // Hide each shape's row together with its label.
+    const bool showBounds = !have || regions::boxOf(loaded->region);
+    const bool showArc = have && regions::arcOf(loaded->region);
+    for (auto [field, visible] : {std::pair<QWidget*, bool>{_boundsRow, showBounds}, {_arcRow, showArc}}) {
+        field->setVisible(visible);
+        if (QWidget* label = _detailsForm->labelForField(field)) {
+            label->setVisible(visible);
+        }
     }
     _jump->setEnabled(have && check.map.has_value());
     _focus->setEnabled(have && check.map.has_value());
@@ -752,7 +889,7 @@ void RegionPanel::refreshDetails()
             const QSignalBlocker block(spin);
             spin->setValue(0);
         }
-        _info->setText(tr("Select a region, or draw one with 3D Box."));
+        _info->setText(tr("Select a region, or draw one with 3D Box or Ray Arc."));
         _populating = false;
         return;
     }
@@ -771,6 +908,28 @@ void RegionPanel::refreshDetails()
             }
         }
         info << tr("%1 voxels in the annotation frame").arg(groupedCount(regions::voxelCount(*box)));
+    } else if (const regions::RayArc* arc = regions::arcOf(region)) {
+        const auto set = [](QDoubleSpinBox* spin, double value) {
+            const QSignalBlocker block(spin);
+            spin->setValue(value);
+        };
+        set(_arcStart, arc->thetaStartDeg);
+        set(_arcSweep, arc->thetaSweepDeg);
+        set(_arcRadiusMin, arc->radiusMin);
+        set(_arcRadiusMax, arc->radiusMax);
+        for (auto* spin : {_arcZMin, _arcZMax}) {
+            const QSignalBlocker block(spin);
+            spin->setRange(0, std::max(0, maxIndex[2]));
+        }
+        {
+            const QSignalBlocker a(_arcZMin);
+            const QSignalBlocker b(_arcZMax);
+            _arcZMin->setValue(arc->zMin);
+            _arcZMax->setValue(arc->zMax);
+        }
+        info << tr("Around the umbilicus from %1, theta 0 toward %2")
+                    .arg(QString::fromStdString(std::filesystem::path(arc->umbilicus.sourcePath).filename().string()))
+                    .arg(QString::fromStdString(arc->umbilicus.seam));
     }
     if (!region.tags.empty()) {
         info << tr("Tags: %1").arg(joinTags(region.tags));
@@ -875,5 +1034,33 @@ void RegionPanel::pickColor()
     const auto result = _regions->update(std::move(next), revision);
     if (!result.ok()) {
         showError(result.message);
+    }
+}
+
+void RegionPanel::applyArc()
+{
+    if (_populating || !_regions) {
+        return;
+    }
+    const regions::Loaded* loaded = _regions->find(_regions->activeId());
+    if (!loaded || !regions::arcOf(loaded->region)) {
+        return;
+    }
+    regions::RayArc arc = *regions::arcOf(loaded->region);
+    arc.thetaStartDeg = _arcStart->value() >= 360.0 ? 0.0 : _arcStart->value();
+    arc.thetaSweepDeg = _arcSweep->value();
+    arc.radiusMin = std::min(_arcRadiusMin->value(), _arcRadiusMax->value());
+    arc.radiusMax = std::max(_arcRadiusMin->value(), _arcRadiusMax->value());
+    arc.zMin = std::min(_arcZMin->value(), _arcZMax->value());
+    arc.zMax = std::max(_arcZMin->value(), _arcZMax->value());
+    if (arc == *regions::arcOf(loaded->region)) {
+        return;
+    }
+    regions::Region next = loaded->region;
+    next.shape = arc;
+    const auto result = _regions->update(std::move(next), loaded->region.revision);
+    if (!result.ok()) {
+        showError(result.message);
+        refreshDetails();
     }
 }

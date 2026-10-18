@@ -12,6 +12,7 @@
 #include <fstream>
 #include <random>
 #include <system_error>
+#include <variant>
 
 namespace fs = std::filesystem;
 
@@ -116,16 +117,53 @@ bool copyRange(Volume& volume, Volume& crop, const LevelRange& range, const std:
     return true;
 }
 
+// 255 where a crop voxel is inside the shape, else 0.
+bool writeMask(const ShapeSpec& spec, const FrameMap& map, const LevelRange& range, const std::array<int, 3>& blockShape, Volume& mask, const Progress& progress, std::uint64_t* bytesWritten)
+{
+    const int size[3] = {
+        range.maxZyx[0] - range.minZyx[0] + 1,
+        range.maxZyx[1] - range.minZyx[1] + 1,
+        range.maxZyx[2] - range.minZyx[2] + 1,
+    };
+    for (int z0 = 0; z0 < size[0]; z0 += blockShape[0]) {
+        for (int y0 = 0; y0 < size[1]; y0 += blockShape[1]) {
+            for (int x0 = 0; x0 < size[2]; x0 += blockShape[2]) {
+                if (progress.canceled()) {
+                    return false;
+                }
+                const int nz = std::min(blockShape[0], size[0] - z0);
+                const int ny = std::min(blockShape[1], size[1] - y0);
+                const int nx = std::min(blockShape[2], size[2] - x0);
+                Array3D<std::uint8_t> block({static_cast<std::size_t>(nz), static_cast<std::size_t>(ny), static_cast<std::size_t>(nx)});
+                for (int z = 0; z < nz; ++z) {
+                    for (int y = 0; y < ny; ++y) {
+                        for (int x = 0; x < nx; ++x) {
+                            const bool inside =
+                                containsIndex(spec, map, range.level, range.minZyx[0] + z0 + z, range.minZyx[1] + y0 + y, range.minZyx[2] + x0 + x);
+                            block(static_cast<std::size_t>(z), static_cast<std::size_t>(y), static_cast<std::size_t>(x)) = inside ? 255 : 0;
+                        }
+                    }
+                }
+                mask.writeZYX(block, {z0, y0, x0}, 0);
+                *bytesWritten += static_cast<std::uint64_t>(block.size());
+            }
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
-std::uint64_t estimateExportBytes(Volume& volume, const Box& box, const FrameMap& map, int level)
+std::uint64_t estimateExportBytes(Volume& volume, const ShapeSpec& spec, const FrameMap& map, int level)
 {
     auto* array = volume.chunkedCache();
     if (!array || !volume.hasScaleLevel(level)) {
         return 0;
     }
     const std::uint64_t voxelBytes = array->dtype() == vc::render::ChunkDtype::UInt16 ? 2 : 1;
-    return boxIndexRange(box, map, level, array->shape(level)).count() * voxelBytes;
+    const std::uint64_t voxels = shapeIndexRange(spec, map, level, array->shape(level)).count();
+    // A ray arc also writes a uint8 mask of the same shape.
+    return voxels * voxelBytes + (std::holds_alternative<RayArc>(spec.shape) ? voxels : 0);
 }
 
 fs::path defaultExportDir(const fs::path& regionsDir, const std::string& regionId, const std::string& createdUtc)
@@ -154,13 +192,20 @@ ExportResult exportCrop(
         out.error = "level " + std::to_string(level) + " is not stored in this volume";
         return out;
     }
-    const LevelRange range = boxIndexRange(region.shape, map, level, array->shape(level));
+    std::string specError;
+    const auto spec = shapeSpec(region, &specError);
+    if (!spec) {
+        out.error = specError;
+        return out;
+    }
+    const bool withMask = std::holds_alternative<RayArc>(spec->shape);
+    const LevelRange range = shapeIndexRange(*spec, map, level, array->shape(level));
     if (range.empty()) {
         out.error = "the region is outside this volume at level " + std::to_string(level);
         return out;
     }
     const bool wide = array->dtype() == vc::render::ChunkDtype::UInt16;
-    const std::uint64_t bytes = range.count() * (wide ? 2 : 1);
+    const std::uint64_t bytes = range.count() * ((wide ? 2 : 1) + (withMask ? 1 : 0));
     if (bytes > request.maxBytes) {
         out.error = "the crop would be " + formatGiB(bytes) + " GiB; exports above " + formatGiB(request.maxBytes) +
                     " GiB are refused (choose a coarser level)";
@@ -223,6 +268,14 @@ ExportResult exportCrop(
             completed =
                 copyRange<std::uint8_t>(volume, *crop, range, chunk, static_cast<std::uint8_t>(std::clamp(fill, 0.0, 255.0)), progress, &error, &out.bytesWritten);
         }
+        if (completed && withMask) {
+            // One level, so writeZYX's mean downsampling never touches the mask.
+            Volume::ZarrCreateOptions maskOptions = options;
+            maskOptions.dtype = vc::render::ChunkDtype::UInt8;
+            maskOptions.fillValue = 0.0;
+            auto mask = Volume::New(partial / "mask.zarr", maskOptions);
+            completed = writeMask(*spec, map, range, chunk, *mask, progress, &out.bytesWritten);
+        }
         if (!completed) {
             cleanup();
             if (!error.empty()) {
@@ -267,7 +320,10 @@ ExportResult exportCrop(
         Json::array({s, 0.0, 0.0, i0[2] * s}),
         Json::array({0.0, 0.0, 0.0, 1.0}),
     });
-    crop["files"] = Json::array({"volume.zarr"});
+    crop["files"] = withMask ? Json::array({"volume.zarr", "mask.zarr"}) : Json::array({"volume.zarr"});
+    if (withMask) {
+        crop["mask"] = "mask.zarr is 255 where a crop voxel's region point lies inside the ray arc and 0 elsewhere";
+    }
     manifest["crop"] = std::move(crop);
     manifest["vc3d_version"] = ProjectInfo::NameAndVersion();
     manifest["repository_hash"] = ProjectInfo::RepositoryHash();

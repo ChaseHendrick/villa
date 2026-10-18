@@ -175,6 +175,16 @@ vc_add_test(NAME test_vc3d_region_stats
     LIBS doctest::doctest vc_core vc_lasagna
     INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
 
+# Ray arc regions and the shared annotation umbilicus resolution (Qt-free).
+vc_add_test(NAME test_vc3d_region_ray_arc
+    SOURCES test_vc3d_region_ray_arc.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/AnnotationUmbilicus.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionModel.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionStats.cpp
+            ${PROJECT_SOURCE_DIR}/apps/VC3D/RegionExport.cpp
+    LIBS doctest::doctest vc_core vc_lasagna
+    INCLUDES ${PROJECT_SOURCE_DIR}/apps/VC3D)
+
 vc_add_test(NAME test_scale_bar_units
     SOURCES test_scale_bar_units.cpp
             ${PROJECT_SOURCE_DIR}/apps/VC3D/volume_viewers/CVolumeViewerView.cpp

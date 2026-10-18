@@ -8,6 +8,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QFormLayout;
 class QGroupBox;
 class QProgressBar;
 class QLabel;
@@ -39,6 +40,7 @@ private:
     void selectActiveInList();
     void applyName();
     void applyBounds();
+    void applyArc();
     void pickColor();
     // Errors and lasting states only; success messages go to the status bar.
     void showError(const QString& message);
@@ -57,15 +59,29 @@ private:
     QLabel* _statusLabel = nullptr;
     QToolButton* _boxTool = nullptr;
     QToolButton* _editTool = nullptr;
+    QToolButton* _arcTool = nullptr;
+    QWidget* _arcOptions = nullptr;
+    QComboBox* _arcDirection = nullptr;
+    QComboBox* _arcSeam = nullptr;
+    QLabel* _umbilicusLabel = nullptr;
     QSpinBox* _depth = nullptr;
     QTreeWidget* _list = nullptr;
     QLabel* _loadErrors = nullptr;
 
     QWidget* _details = nullptr;
+    QFormLayout* _detailsForm = nullptr;
     QLineEdit* _name = nullptr;
     QPushButton* _color = nullptr;
     QSpinBox* _bounds[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
     QWidget* _boundsRow = nullptr;
+    QWidget* _arcRow = nullptr;
+    QDoubleSpinBox* _arcStart = nullptr;
+    QDoubleSpinBox* _arcSweep = nullptr;
+    QDoubleSpinBox* _arcRadiusMin = nullptr;
+    QDoubleSpinBox* _arcRadiusMax = nullptr;
+    QSpinBox* _arcZMin = nullptr;
+    QSpinBox* _arcZMax = nullptr;
+    QPushButton* _refreshUmbilicus = nullptr;
     QLabel* _info = nullptr;
 
     QPushButton* _jump = nullptr;

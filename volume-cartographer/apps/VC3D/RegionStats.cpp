@@ -79,6 +79,55 @@ LevelRange boxIndexRange(const Box& box, const FrameMap& regionToVolume, int lev
     return range;
 }
 
+std::optional<ShapeSpec> shapeSpec(const Region& region, std::string* error)
+{
+    ShapeSpec spec;
+    spec.shape = region.shape;
+    if (const RayArc* arc = arcOf(region)) {
+        auto compiled = compileArc(*arc, region.frame, error);
+        if (!compiled) {
+            return std::nullopt;
+        }
+        spec.arc = std::make_shared<const CompiledArc>(std::move(*compiled));
+    }
+    return spec;
+}
+
+LevelRange shapeIndexRange(const ShapeSpec& spec, const FrameMap& regionToVolume, int level, const std::array<int, 3>& levelShapeZyx)
+{
+    if (const auto* box = std::get_if<Box>(&spec.shape)) {
+        return boxIndexRange(*box, regionToVolume, level, levelShapeZyx);
+    }
+    const auto& arc = std::get<RayArc>(spec.shape);
+    if (!spec.arc) {
+        return LevelRange{level};
+    }
+    // The arc's bounding box, widened to whole voxels: every voxel inside the
+    // arc has its region point inside this box.
+    const auto bounds = arcBounds(arc, *spec.arc);
+    Box box;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double lo = std::floor(bounds[0][axis]);
+        const double hi = std::ceil(bounds[1][axis]);
+        if (!(hi >= lo) || hi < 0.0) {
+            return LevelRange{level};
+        }
+        box.min[axis] = static_cast<int>(std::clamp(lo, 0.0, static_cast<double>(std::numeric_limits<int>::max())));
+        box.max[axis] = static_cast<int>(std::clamp(hi, 0.0, static_cast<double>(std::numeric_limits<int>::max())));
+    }
+    return boxIndexRange(box, regionToVolume, level, levelShapeZyx);
+}
+
+bool containsIndex(const ShapeSpec& spec, const FrameMap& regionToVolume, int level, int z, int y, int x)
+{
+    const double s = std::ldexp(1.0, level - regionToVolume.log2RegionToViewer);
+    const cv::Vec3d p(x * s, y * s, z * s);
+    if (const auto* box = std::get_if<Box>(&spec.shape)) {
+        return contains(*box, p);
+    }
+    return spec.arc && contains(std::get<RayArc>(spec.shape), *spec.arc, p);
+}
+
 bool forEachChunk(
     Volume& volume,
     int level,
@@ -88,7 +137,8 @@ bool forEachChunk(
     const ChunkVisitor& visit,
     std::string* error,
     std::uint64_t* chunksRead,
-    std::uint64_t* fillChunks)
+    std::uint64_t* fillChunks,
+    const std::function<bool(const cv::Vec3i& fromZyx, const cv::Vec3i& toZyx)>& keepChunk)
 {
     using vc::render::ChunkKey;
     using vc::render::ChunkStatus;
@@ -127,6 +177,17 @@ bool forEachChunk(
                 key.iz = cz;
                 key.iy = cy;
                 key.ix = cx;
+                if (keepChunk) {
+                    const cv::Vec3i
+                        from(std::max(range.minZyx[0], cz * chunkShape[0]), std::max(range.minZyx[1], cy * chunkShape[1]), std::max(range.minZyx[2], cx * chunkShape[2]));
+                    const cv::Vec3i
+                        to(std::min(range.maxZyx[0], (cz + 1) * chunkShape[0] - 1),
+                           std::min(range.maxZyx[1], (cy + 1) * chunkShape[1] - 1),
+                           std::min(range.maxZyx[2], (cx + 1) * chunkShape[2] - 1));
+                    if (!keepChunk(from, to)) {
+                        continue;
+                    }
+                }
                 keys.push_back(key);
             }
         }
@@ -309,18 +370,18 @@ std::string toDecimal(unsigned __int128 value)
     return digits;
 }
 
-std::vector<std::pair<int, std::uint64_t>> levelVoxelCounts(Volume& volume, const Box& box, const FrameMap& map)
+std::vector<std::pair<int, std::uint64_t>> levelVoxelCounts(Volume& volume, const ShapeSpec& spec, const FrameMap& map)
 {
     std::vector<std::pair<int, std::uint64_t>> counts;
     for (const int level : volume.presentScaleLevels()) {
-        counts.emplace_back(level, boxIndexRange(box, map, level, volume.shape(level)).count());
+        counts.emplace_back(level, shapeIndexRange(spec, map, level, volume.shape(level)).count());
     }
     return counts;
 }
 
-int chooseLevel(Volume& volume, const Box& box, const FrameMap& map, std::uint64_t voxelBudget)
+int chooseLevel(Volume& volume, const ShapeSpec& spec, const FrameMap& map, std::uint64_t voxelBudget)
 {
-    const auto counts = levelVoxelCounts(volume, box, map);
+    const auto counts = levelVoxelCounts(volume, spec, map);
     if (counts.empty()) {
         return 0;
     }
@@ -333,7 +394,7 @@ int chooseLevel(Volume& volume, const Box& box, const FrameMap& map, std::uint64
 }
 
 std::optional<VolumeStats> computeStats(
-    Volume& volume, const std::string& volumeId, const Box& box, const FrameMap& map, const StatsRequest& request, const Progress& progress, std::string* error)
+    Volume& volume, const std::string& volumeId, const ShapeSpec& spec, const FrameMap& map, const StatsRequest& request, const Progress& progress, std::string* error)
 {
     const auto started = std::chrono::steady_clock::now();
     const auto setError = [error](std::string message) {
@@ -356,7 +417,12 @@ std::optional<VolumeStats> computeStats(
         }
     }
 
-    const int level = request.level >= 0 ? request.level : chooseLevel(volume, box, map, request.voxelBudget);
+    const RayArc* arc = std::get_if<RayArc>(&spec.shape);
+    if (arc && !spec.arc) {
+        setError("the ray arc's umbilicus is not compiled");
+        return std::nullopt;
+    }
+    const int level = request.level >= 0 ? request.level : chooseLevel(volume, spec, map, request.voxelBudget);
     if (!volume.hasScaleLevel(level) || level >= array->numLevels()) {
         setError("level " + std::to_string(level) + " is not stored in this volume");
         return std::nullopt;
@@ -365,7 +431,7 @@ std::optional<VolumeStats> computeStats(
     stats.volumeId = volumeId;
     stats.dtype = wide ? "uint16" : "uint8";
     stats.level = level;
-    stats.range = boxIndexRange(box, map, level, array->shape(level));
+    stats.range = shapeIndexRange(spec, map, level, array->shape(level));
     stats.threshold = request.threshold;
     stats.binWidth = wide ? 256 : 1;
     try {
@@ -383,17 +449,59 @@ std::optional<VolumeStats> computeStats(
     const double rawFill = array->fillValue();
     const auto fill = static_cast<std::size_t>(std::clamp(std::isfinite(rawFill) ? rawFill : 0.0, 0.0, static_cast<double>(bins - 1)));
 
+    // A ray arc is scanned over its bounding range: chunks wholly outside it
+    // are never read, chunks wholly inside count every voxel, and the rest
+    // test each voxel's region point i * 2^L / k.
+    const double s = std::ldexp(1.0, level - map.log2RegionToViewer);
+    const auto coverageOf = [&](const cv::Vec3i& fromZyx, const cv::Vec3i& toZyx) {
+        if (!arc) {
+            return Coverage::Inside;
+        }
+        return classify(*arc, *spec.arc, cv::Vec3d(fromZyx[2] * s, fromZyx[1] * s, fromZyx[0] * s), cv::Vec3d(toZyx[2] * s, toZyx[1] * s, toZyx[0] * s));
+    };
+    std::function<bool(const cv::Vec3i&, const cv::Vec3i&)> keepChunk;
+    if (arc) {
+        keepChunk = [&](const cv::Vec3i& fromZyx, const cv::Vec3i& toZyx) {
+            if (coverageOf(fromZyx, toZyx) == Coverage::Outside) {
+                ++stats.chunksSkipped;
+                return false;
+            }
+            return true;
+        };
+    }
+
     const ChunkVisitor visit = [&](int worker, const ChunkView& chunk) {
         auto& h = histograms[static_cast<std::size_t>(worker)];
         const std::uint64_t nz = static_cast<std::uint64_t>(chunk.toZyx[0] - chunk.fromZyx[0] + 1);
         const std::uint64_t ny = static_cast<std::uint64_t>(chunk.toZyx[1] - chunk.fromZyx[1] + 1);
         const std::uint64_t nx = static_cast<std::uint64_t>(chunk.toZyx[2] - chunk.fromZyx[2] + 1);
+        const std::size_t strideY = static_cast<std::size_t>(chunk.chunkShapeZyx[2]);
+        const std::size_t strideZ = strideY * static_cast<std::size_t>(chunk.chunkShapeZyx[1]);
+        if (coverageOf(chunk.fromZyx, chunk.toZyx) != Coverage::Inside) {
+            for (int z = chunk.fromZyx[0]; z <= chunk.toZyx[0]; ++z) {
+                for (int y = chunk.fromZyx[1]; y <= chunk.toZyx[1]; ++y) {
+                    const std::size_t rowStart = static_cast<std::size_t>(z - chunk.chunkOriginZyx[0]) * strideZ +
+                                                 static_cast<std::size_t>(y - chunk.chunkOriginZyx[1]) * strideY;
+                    for (int x = chunk.fromZyx[2]; x <= chunk.toZyx[2]; ++x) {
+                        if (!contains(*arc, *spec.arc, cv::Vec3d(x * s, y * s, z * s))) {
+                            continue;
+                        }
+                        std::size_t value = fill;
+                        if (!chunk.allFill && chunk.data) {
+                            const std::size_t at = rowStart + static_cast<std::size_t>(x - chunk.chunkOriginZyx[2]);
+                            value = wide ? reinterpret_cast<const std::uint16_t*>(chunk.data)[at]
+                                         : reinterpret_cast<const std::uint8_t*>(chunk.data)[at];
+                        }
+                        ++h[value];
+                    }
+                }
+            }
+            return;
+        }
         if (chunk.allFill || !chunk.data) {
             h[fill] += nz * ny * nx;
             return;
         }
-        const std::size_t strideY = static_cast<std::size_t>(chunk.chunkShapeZyx[2]);
-        const std::size_t strideZ = strideY * static_cast<std::size_t>(chunk.chunkShapeZyx[1]);
         for (int z = chunk.fromZyx[0]; z <= chunk.toZyx[0]; ++z) {
             for (int y = chunk.fromZyx[1]; y <= chunk.toZyx[1]; ++y) {
                 const std::size_t rowStart = static_cast<std::size_t>(z - chunk.chunkOriginZyx[0]) * strideZ +
@@ -415,7 +523,8 @@ std::optional<VolumeStats> computeStats(
     };
 
     std::string readError;
-    const bool completed = forEachChunk(volume, level, stats.range, threads, progress, visit, &readError, &stats.chunksRead, &stats.fillChunks);
+    const bool completed =
+        forEachChunk(volume, level, stats.range, threads, progress, visit, &readError, &stats.chunksRead, &stats.fillChunks, keepChunk);
     if (!completed && !readError.empty()) {
         setError(readError);
         return std::nullopt;
@@ -478,6 +587,7 @@ Json statsJson(const VolumeStats& stats, const Region& region, const FrameMap& m
     doc["version"] = 1;
     doc["region_id"] = region.id;
     doc["region_revision"] = region.revision;
+    doc["shape_type"] = std::string(shapeTypeName(region.shape));
     Json volume = Json::object();
     volume["id"] = stats.volumeId;
     volume["location"] = location;
@@ -522,6 +632,7 @@ Json statsJson(const VolumeStats& stats, const Region& region, const FrameMap& m
     doc["fraction_above"] = stats.fractionAbove;
     doc["volume_mm3"] = stats.volumeMm3;
     doc["chunks_read"] = stats.chunksRead;
+    doc["chunks_skipped"] = stats.chunksSkipped;
     doc["fill_chunks"] = stats.fillChunks;
     doc["seconds"] = stats.seconds;
     doc["vc3d_version"] = ProjectInfo::NameAndVersion();

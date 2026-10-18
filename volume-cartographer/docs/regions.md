@@ -1,7 +1,8 @@
 # VC3D regions
 
 A region marks a part of a scan you want to come back to: a sheet jump in a
-prediction, a delamination, odd texture. VC3D draws it in the slice views,
+prediction, a delamination, odd texture. A region is a 3D box or a ray arc (an
+annular sector around the umbilicus over a z range). VC3D draws it in the slice views,
 keeps it with the project, measures the voxels inside it and saves them as a
 zarr crop. This page gives the file formats and every rule VC3D uses, so a
 region can be checked or used without VC3D.
@@ -18,13 +19,21 @@ are stored next to the project file.
   the focus point moves to the box's center (keeping the drawn slice), so the
   other two slice views show its depth; like any focus change, this also
   recenters the segmentation view.
+- **Ray Arc** (needs a project umbilicus): click two opposite corners of the
+  arc in the XY view. The angles and radii come from the clicks, the angle
+  runs from the first click to the second in increasing theta (or decreasing,
+  per the dock's direction choice), and z is the current slice +/- half the
+  dock's depth. The dock's seam choice (+x, -x, +y or -y) sets where theta = 0
+  points for new arcs. While Ray Arc or Edit is on, the XY view marks the
+  umbilicus center of the slice with a cross and draws the theta = 0 ray.
 - **Edit**: drag the active box's corner or edge handles, or its center handle
   (the ring) to move the whole box. Only handles take a press: a click
   anywhere else, inside the box too, keeps its usual meaning (selecting a
   point, starting a fiber). On a rotated vertical plane only the top and
-  bottom (z) handles exist; tilted planes have none. Where a handle and the XY
-  view's plane-rotation handle overlap, the region's handle wins; turn the
-  tool off to rotate there.
+  bottom (z) handles exist; tilted planes have none. A ray arc has radius
+  handles at mid-angle and angle handles at mid-radius in the XY view; its z
+  range is edited in the dock. Where a handle and the XY view's plane-rotation
+  handle overlap, the region's handle wins; turn the tool off to rotate there.
 - **Esc** cancels a drag, or leaves the tool. Shift, Ctrl and right-button
   input keep their usual meaning while a tool is on. Region edits have no
   undo; Ctrl+Z keeps its segmentation meaning.
@@ -95,6 +104,53 @@ i_max = floor(max * k / 2^L)
   region point inside the box. The range is empty when `i_min > i_max` on any
   axis.
 
+## Ray arcs
+
+A ray arc stores `theta_start_deg` in [0, 360), `theta_sweep_deg` in [0.1, 360],
+`radius_min < radius_max` (at least 1 voxel apart), integer `z_min <= z_max`,
+and the umbilicus it was drawn around: its control points already carried
+into the region frame, the seam, and the source file, scale and scale source
+for provenance. Embedding keeps the arc's voxels fixed when the project's
+umbilicus file is refined later; "Refresh umbilicus" in the dock re-embeds it
+on purpose (one revision).
+
+The umbilicus is the project's (File > Attach Umbilicus..., or an
+`umbilicus.json` next to the project file), framed exactly as the Fiber Map
+frames it: a file stamped with `volume_width`, `volume_height` and
+`volume_slices`, or a voxel size, is scaled into the annotation frame; an
+unstamped file is accepted only when its points fill a power-of-two grid of
+the volume. A file that defeats both, or whose stamp the named volume
+contradicts, is refused.
+
+With `U = Umbilicus::FromPoints(control_points, {B_z, B_y, B_x})` and
+`c(z) = U.centers()[clamp(lround(z), 0, B_z - 1)]`, the index
+`Umbilicus::theta` uses, a region point `p` is inside when
+
+```
+r_xy(p)  = hypot(p.x - c(p.z).x, p.y - c(p.z).y)       (XY distance, not the 3D distance_to_umbilicus)
+theta(p) = atan2(det(s, q), dot(s, q)) in degrees, in [0, 360), q = p.xy - c(p.z), s the seam direction
+delta(p) = fmod(theta(p) - theta_start + 360, 360)
+inside   = z_min <= p.z <= z_max  and  radius_min <= r_xy(p) <= radius_max  and  delta(p) <= theta_sweep
+```
+
+In image coordinates (y down) increasing theta turns from the seam toward +y.
+At `r_xy = 0` theta is 0. VC3D computes this in double precision from the
+float centers `Umbilicus` interpolates.
+
+- Statistics and exports scan the level-L range of the arc's bounding box and
+  count a voxel when its region point `i * 2^L / k` is inside. Chunks wholly
+  outside the arc are never read (`chunks_skipped`), chunks wholly inside count
+  every voxel, and the rest test each voxel. The classification is
+  conservative, so it never changes which voxels count.
+- An export of a ray arc also writes `mask.zarr`: uint8, 255 where a crop
+  voxel is inside the arc, 0 elsewhere, one level of the same shape.
+- Outlines: exact arcs and radial lines on the XY view; on XZ, YZ and rotated
+  vertical planes the exact region is a set of horizontal intervals per slice
+  (the center changes per slice), drawn as a staircase. When slices are under
+  one screen pixel apart the outline uses every m-th slice. Ray arcs are not
+  drawn on tilted planes.
+- Use as focus box sets the focus box to the arc's bounding box.
+
 ## Region file
 
 One file per region: `<project dir>/regions/<sanitized project file name>/<id>.region.json`.
@@ -123,6 +179,21 @@ An unsaved project has no regions folder, and nothing is written.
   "shape": {"type": "box", "min": {"x": 4100, "y": 3900, "z": 6000}, "max": {"x": 4356, "y": 4156, "z": 6128}}
 }
 ```
+
+A ray arc's shape:
+
+```json
+{ "type": "ray_arc",
+  "theta_start_deg": 30.0, "theta_sweep_deg": 25.0,
+  "radius_min": 900.0, "radius_max": 1400.0,
+  "z_min": 6000, "z_max": 6400,
+  "umbilicus": { "source_path": "/data/PHerc0172/umbilicus.json", "scale": 4.0,
+                 "scale_source": "stamped_dimensions", "seam": "+x",
+                 "control_points": [{"x": 4012.5, "y": 3990.0, "z": 0.0}] } }
+```
+
+`scale_source` is `stamped_dimensions`, `stamped_voxel_size` or
+`inferred_from_grid`; `seam` is `+x`, `-x`, `+y` or `-y`.
 
 - `status` is `open` or `resolved`; `color` is `#rrggbb`; `id` is 1 to 64 of
   `[A-Za-z0-9_-]` and equals the file name stem.

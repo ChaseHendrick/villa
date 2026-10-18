@@ -25,6 +25,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace vc3d::regions
@@ -55,6 +57,99 @@ struct Frame {
     Json coordinateIdentity = Json::object();
 };
 
+// --- Ray arcs ---
+
+// The project umbilicus as a ray arc embeds it: control points already
+// carried into the region frame, so the arc's voxels stay fixed when the
+// project's umbilicus file is refined later ("Refresh umbilicus" re-embeds).
+struct UmbilicusRef {
+    std::string sourcePath;
+    double scale = 1.0;
+    std::string scaleSource{"stamped_dimensions"};  // stamped_dimensions | stamped_voxel_size | inferred_from_grid
+    std::string seam{"+x"};                         // +x | -x | +y | -y
+    std::vector<cv::Vec3d> controlPoints;           // region frame
+    bool operator==(const UmbilicusRef&) const = default;
+};
+
+// An annular sector around the umbilicus over a z range: the region points
+// with z_min <= z <= z_max, radius_min <= r_xy <= radius_max and
+// fmod(theta - theta_start + 360, 360) <= theta_sweep.
+struct RayArc {
+    double thetaStartDeg = 0.0;   // [0, 360), from the seam toward +y
+    double thetaSweepDeg = 90.0;  // (0, 360]
+    double radiusMin = 0.0;       // voxels, XY distance from the umbilicus
+    double radiusMax = 1.0;
+    int zMin = 0;
+    int zMax = 0;
+    UmbilicusRef umbilicus;
+    bool operator==(const RayArc&) const = default;
+};
+
+inline constexpr double kMinRadiusSpan = 1.0;
+inline constexpr double kMinSweepDeg = 0.1;
+
+bool isValidSeam(std::string_view seam);
+bool isValidScaleSource(std::string_view source);
+
+// A ray arc's umbilicus, built once (immutable, shared by workers): the dense
+// per-slice centers Umbilicus::FromPoints interpolates over the region frame's
+// z extent, and the seam direction.
+struct CompiledArc {
+    std::vector<cv::Vec2d> centers;
+    cv::Vec2d seam{1.0, 0.0};
+    // The center Umbilicus::theta uses for height z: index clamp(lround(z)).
+    cv::Vec2d centerAt(double z) const;
+    // The unit XY direction at angle `thetaDeg` from the seam.
+    cv::Vec2d direction(double thetaDeg) const;
+};
+
+std::optional<CompiledArc> compileArc(const RayArc& arc, const Frame& frame, std::string* error);
+// XY distance to the umbilicus center of the point's slice (not the 3D
+// distance_to_umbilicus), and the angle from the seam in [0, 360), computed in
+// double from the same centers and seam Umbilicus::theta uses.
+double radiusXY(const CompiledArc& compiled, const cv::Vec3d& regionPoint);
+double thetaDeg(const CompiledArc& compiled, const cv::Vec3d& regionPoint);
+bool inSector(const RayArc& arc, double thetaDeg);
+bool contains(const RayArc& arc, const CompiledArc& compiled, const cv::Vec3d& regionPoint);
+
+enum class Coverage { Outside, Partial, Inside };
+// Conservative classification of a region-frame block [lo, hi]: Inside or
+// Outside only when every point is, Partial when unsure.
+Coverage classify(const RayArc& arc, const CompiledArc& compiled, const cv::Vec3d& lo, const cv::Vec3d& hi);
+// Region-frame bounding box of the arc.
+std::array<cv::Vec3d, 2> arcBounds(const RayArc& arc, const CompiledArc& compiled);
+
+// Outline on a horizontal (AxisZ) plane at region height z: closed polylines
+// in the region frame (two circles for a full sweep), at most `stepDeg`
+// degrees apart.
+std::vector<std::vector<cv::Vec3d>> arcOutlineHorizontal(const RayArc& arc, const CompiledArc& compiled, double zRegion, double stepDeg);
+// The intervals of u where the horizontal line originXY + u * h (h a unit XY
+// vector) at slice m is inside the arc.
+std::vector<std::pair<double, double>> arcRowIntervals(const RayArc& arc, const CompiledArc& compiled, const cv::Vec2d& originXY, const cv::Vec2d& h, int slice);
+// Outline on a vertical plane through originXY with horizontal direction h:
+// the boundary of the per-slice rows (exact for rowStride 1), as segments in
+// the region frame, for slices [sliceFrom, sliceTo].
+std::vector<std::array<cv::Vec3d, 2>> arcOutlineVertical(
+    const RayArc& arc, const CompiledArc& compiled, const cv::Vec2d& originXY, const cv::Vec2d& h, int sliceFrom, int sliceTo, int rowStride);
+
+enum class ArcHandleKind { RadiusMin, RadiusMax, ThetaStart, ThetaEnd };
+struct ArcHandle {
+    ArcHandleKind kind = ArcHandleKind::RadiusMin;
+    cv::Vec3d regionPos{0, 0, 0};
+};
+// Radius handles at mid-angle and angle handles at mid-radius, on a
+// horizontal plane at region height z.
+std::vector<ArcHandle> arcHandles(const RayArc& arc, const CompiledArc& compiled, double zRegion);
+RayArc dragArcHandle(const RayArc& start, const CompiledArc& compiled, ArcHandleKind kind, const cv::Vec3d& cursorRegion);
+// The arc from two clicks: angles and radii from the clicks, the angle running
+// from the first to the second click (increasing) or back, z the slice
+// +/- depth/2 clamped to [0, zMaxIndex]. None when the radii are under one
+// voxel apart.
+std::optional<RayArc> arcFromClicks(
+    const CompiledArc& compiled, const cv::Vec3d& firstRegion, const cv::Vec3d& secondRegion, bool increasing, double sliceRegion, int depthVoxels, int zMaxIndex);
+
+using Shape = std::variant<Box, RayArc>;
+
 enum class Status { Open, Resolved };
 
 struct Region {
@@ -69,17 +164,22 @@ struct Region {
     Status status = Status::Open;
     std::uint64_t revision = 0;
     Frame frame;
-    Box shape;
+    Shape shape = Box{};
 };
 
 inline const Box* boxOf(const Region& region)
 {
-    return &region.shape;
+    return std::get_if<Box>(&region.shape);
 }
 inline Box* boxOf(Region& region)
 {
-    return &region.shape;
+    return std::get_if<Box>(&region.shape);
 }
+inline const RayArc* arcOf(const Region& region)
+{
+    return std::get_if<RayArc>(&region.shape);
+}
+std::string_view shapeTypeName(const Shape& shape);
 
 struct Loaded {
     Region region;
@@ -201,5 +301,8 @@ bool shouldInstallTools(std::string_view role, std::string_view surfaceName);
 
 // "x 4100..4356  y 3900..4156  z 6000..6128  (257 x 257 x 129 voxels)"
 std::string describeBox(const Box& box);
+// "theta 30..55 deg  r 900..1400  z 6000..6400"
+std::string describeArc(const RayArc& arc);
+std::string describeShape(const Shape& shape);
 
 }  // namespace vc3d::regions

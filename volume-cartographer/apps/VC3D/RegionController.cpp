@@ -1,5 +1,6 @@
 #include "RegionController.hpp"
 
+#include "AnnotationUmbilicus.hpp"
 #include "CState.hpp"
 #include "OpenDataCoordinateIdentity.hpp"
 #include "ProjectFiberPaths.hpp"
@@ -24,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <thread>
 
 namespace regions = vc3d::regions;
@@ -32,6 +34,8 @@ namespace
 {
 
 constexpr auto kNewBoxDepthKey = "regions/new_box_depth";
+constexpr auto kArcIncreasingKey = "regions/arc_increasing";
+constexpr auto kArcSeamKey = "regions/arc_seam";
 constexpr int kDefaultNewBoxDepth = 64;
 constexpr int kMaxNewBoxDepth = 4096;
 // A press that moves less than this many scene pixels is a click.
@@ -70,6 +74,7 @@ QString gib(std::uint64_t bytes)
 
 struct StatsInput {
     std::vector<regions::Region> regions;
+    std::vector<regions::ShapeSpec> specs;
     std::vector<regions::FrameMap> maps;
     std::shared_ptr<Volume> volume;
     std::string volumeId;
@@ -112,6 +117,9 @@ RegionController::RegionController(CState* state, ViewerManager* viewers, QObjec
     {
         QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
         _newBoxDepth = std::clamp(settings.value(kNewBoxDepthKey, kDefaultNewBoxDepth).toInt(), 1, kMaxNewBoxDepth);
+        _arcIncreasing = settings.value(kArcIncreasingKey, true).toBool();
+        const QString seam = settings.value(kArcSeamKey, QStringLiteral("+x")).toString();
+        _arcSeam = regions::isValidSeam(seam.toStdString()) ? seam : QStringLiteral("+x");
     }
     if (_state) {
         connect(_state, &CState::vpkgChanged, this, [this](const std::shared_ptr<VolumePkg>&) {
@@ -122,6 +130,10 @@ RegionController::RegionController(CState* state, ViewerManager* viewers, QObjec
         connect(_state, &CState::volumeClosing, this, [this]() {
             cancelGestures();
             cancelJob();
+        });
+        connect(_state, &CState::umbilicusChanged, this, [this]() {
+            refreshUmbilicusState();
+            emit toolChanged();
         });
     }
     if (_viewers) {
@@ -288,7 +300,10 @@ void RegionController::rebuildFrameChecks()
 void RegionController::onProjectChanged()
 {
     cancelDrag(false);
+    clearArcDraft();
+    _compiledArcs.clear();
     refreshVolumeFrame();
+    refreshUmbilicusState();
     _store.setDirectory(directory().toStdU16String());
     _activeId.clear();
     rebuildFrameChecks();
@@ -299,7 +314,9 @@ void RegionController::onProjectChanged()
 void RegionController::onVolumeChanged()
 {
     cancelDrag(false);
+    clearArcDraft();
     refreshVolumeFrame();
+    refreshUmbilicusState();
     syncDirectory();
     rebuildFrameChecks();
     emit regionsChanged();
@@ -339,6 +356,19 @@ QString RegionController::nextColor(std::size_t index)
     return QString::fromLatin1(kPalette[index % (sizeof(kPalette) / sizeof(kPalette[0]))]);
 }
 
+RegionController::Result RegionController::checkCompiles(const regions::Region& region) const
+{
+    Result result;
+    if (const regions::RayArc* arc = regions::arcOf(region)) {
+        std::string error;
+        if (!regions::compileArc(*arc, region.frame, &error)) {
+            result.code = Code::Incompatible;
+            result.message = tr("The ray arc's umbilicus cannot be built: %1").arg(QString::fromStdString(error));
+        }
+    }
+    return result;
+}
+
 RegionController::Result RegionController::create(regions::Region draft)
 {
     syncDirectory();
@@ -374,6 +404,9 @@ RegionController::Result RegionController::create(regions::Region draft)
     }
     draft.created.clear();
     draft.frame = *frame;
+    if (result = checkCompiles(draft); !result.ok()) {
+        return result;
+    }
     result = _store.create(std::move(draft));
     emitChanged(result);
     return result;
@@ -390,6 +423,13 @@ RegionController::Result RegionController::update(regions::Region next, std::opt
             result.message =
                 tr("Region %1 does not fit this volume: %2").arg(QString::fromStdString(existing->region.name), QString::fromStdString(check.reason));
             return result;
+        }
+        // The store keeps the stored frame, so a ray arc compiles over it.
+        regions::Region framed = next;
+        framed.frame = existing->region.frame;
+        if (Result compiles = checkCompiles(framed); !compiles.ok()) {
+            emit statusMessage(compiles.message, 6000);
+            return compiles;
         }
     }
     Result result = _store.update(std::move(next), expectedRevision);
@@ -448,7 +488,13 @@ RegionController::Result RegionController::jumpTo(const QString& id)
         result.message = tr("No viewers");
         return result;
     }
-    const cv::Vec3d center = regions::centerViewer(*regions::boxOf(loaded->region), *check.map);
+    const auto bounds = regionBounds(loaded->region);
+    if (!bounds) {
+        result.code = Code::Incompatible;
+        result.message = tr("The ray arc's umbilicus cannot be built");
+        return result;
+    }
+    const cv::Vec3d center = regions::toViewer(0.5 * (bounds->at(0) + bounds->at(1)), *check.map);
     const cv::Vec3f position(static_cast<float>(center[0]), static_cast<float>(center[1]), static_cast<float>(center[2]));
     _viewers->centerFocusAt(position, cv::Vec3f(0.0f, 0.0f, 0.0f), std::string{});
     _viewers->recenterPlaneViewersOn(position);
@@ -473,8 +519,24 @@ RegionController::Result RegionController::useAsFocusBox(const QString& id)
         result.message = QString::fromStdString(check.reason);
         return result;
     }
+    const auto bounds = regionBounds(loaded->region);
+    if (!bounds) {
+        result.code = Code::Incompatible;
+        result.message = tr("The ray arc's umbilicus cannot be built");
+        return result;
+    }
     if (_state) {
-        _state->setFocusBounds(regions::focusBounds(*regions::boxOf(loaded->region), *check.map));
+        // A box's focus box is the box itself; a ray arc's is its bounding box.
+        Rect3D rect;
+        const double k = check.map->regionToViewer();
+        for (int axis = 0; axis < 3; ++axis) {
+            rect.low[axis] = static_cast<float>(std::ceil(bounds->at(0)[axis]) * k);
+            rect.high[axis] = static_cast<float>(std::floor(bounds->at(1)[axis]) * k);
+        }
+        if (const regions::Box* box = regions::boxOf(loaded->region)) {
+            rect = regions::focusBounds(*box, *check.map);
+        }
+        _state->setFocusBounds(rect);
         _state->setFocusBoundsEnabled(true);
     }
     emit statusMessage(
@@ -504,7 +566,13 @@ void RegionController::setTool(Tool tool)
         if (!unavailableReason().isEmpty()) {
             emit statusMessage(unavailableReason(), 5000);
             tool = Tool::None;
+        } else if (tool == Tool::RayArc && !_umbilicus.available) {
+            emit statusMessage(_umbilicus.message, 6000);
+            tool = Tool::None;
         }
+    }
+    if (tool != Tool::RayArc) {
+        clearArcDraft();
     }
     const bool editing = tool == Tool::None ? _editing : false;
     if (tool == _tool && editing == _editing) {
@@ -614,6 +682,16 @@ QString RegionController::regionAt(VolumeViewerBase* viewer, const QPointF& scen
                 continue;
             }
             voxels = regions::voxelCount(*box);
+        } else if (const regions::RayArc* arc = regions::arcOf(loaded.region)) {
+            const auto compiled = compiledArc(loaded.region);
+            const cv::Vec3f v = viewer->sceneToVolume(scenePos);
+            const cv::Vec3d r = regions::toRegion(cv::Vec3d(v[0], v[1], v[2]), *check.map);
+            if (!compiled || !regions::contains(*arc, *compiled, r)) {
+                continue;
+            }
+            const double area = std::max(arc->thetaSweepDeg, 1.0) / 360.0 *
+                                (arc->radiusMax * arc->radiusMax - arc->radiusMin * arc->radiusMin) * std::numbers::pi;
+            voxels = static_cast<std::uint64_t>(area * (arc->zMax - arc->zMin + 1));
         }
         if (id == _activeId) {
             return id;
@@ -635,6 +713,11 @@ bool RegionController::handlePointer(CChunkedVolumeViewer* viewer, const CChunke
                 cancelDrag(true);
                 return true;
             }
+            if (_arcFirst) {
+                clearArcDraft();
+                emit statusMessage(tr("Ray arc canceled"), 2000);
+                return true;
+            }
             if (_inToolChange) {
                 return false;
             }
@@ -649,6 +732,10 @@ bool RegionController::handlePointer(CChunkedVolumeViewer* viewer, const CChunke
             if (_drag && _drag->viewer == viewer) {
                 updateDrag(event);
                 return true;
+            }
+            if (_arcFirst && _arcViewer == viewer) {
+                // The preview follows the cursor; the move is observed only.
+                updateArcPreview(viewer, event);
             }
             if (_tool != Tool::None || _editing) {
                 updateHoverCursor(viewer, event);
@@ -677,23 +764,46 @@ std::optional<RegionController::Pick> RegionController::pickHandle(
     if (!check.map) {
         return std::nullopt;
     }
-    std::optional<Pick> pick;
+    const auto sceneOf = [viewer](const cv::Vec3d& v) {
+        return viewer->volumeToScene(cv::Vec3f(static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])));
+    };
+    Pick pick;
+    pick.map = *check.map;
     double bestDistance = kHandlePickPx;
-    for (const auto& handle : regions::boxHandles(*regions::boxOf(active->region), *check.map, plane, kind)) {
-        const cv::Vec3d& v = handle.viewerPos;
-        const QPointF scene = viewer->volumeToScene(cv::Vec3f(static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])));
-        const double distance = sceneDistance(scene, scenePos);
-        if (distance <= bestDistance) {
-            bestDistance = distance;
-            pick = Pick{handle, *check.map};
+    if (const regions::RayArc* arc = regions::arcOf(active->region); arc && kind == regions::PlaneKind::AxisZ) {
+        const auto compiled = compiledArc(active->region);
+        if (!compiled) {
+            return std::nullopt;
         }
+        const double zRegion = regions::toRegion(plane.origin, *check.map)[2];
+        for (const auto& handle : regions::arcHandles(*arc, *compiled, zRegion)) {
+            const double distance = sceneDistance(sceneOf(regions::toViewer(handle.regionPos, *check.map)), scenePos);
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                pick.arc = handle.kind;
+            }
+        }
+    } else if (const regions::Box* box = regions::boxOf(active->region)) {
+        for (const auto& handle : regions::boxHandles(*box, *check.map, plane, kind)) {
+            const double distance = sceneDistance(sceneOf(handle.viewerPos), scenePos);
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                pick.box = handle;
+            }
+        }
+    }
+    if (!pick.arc && !pick.box) {
+        return std::nullopt;
     }
     return pick;
 }
 
 Qt::CursorShape RegionController::cursorFor(VolumeViewerBase* viewer, const Pick& pick) const
 {
-    const regions::Handle& handle = pick.box;
+    if (!pick.box) {
+        return Qt::SizeAllCursor;
+    }
+    const regions::Handle& handle = *pick.box;
     if (handle.kind == regions::HandleKind::Body) {
         return Qt::OpenHandCursor;
     }
@@ -732,8 +842,9 @@ bool RegionController::handlePress(CChunkedVolumeViewer* viewer, const CChunkedV
     }
     // The active region's handles come first, so a box edge under the XY
     // view's plane-rotation handle can still be grabbed; any other press on a
-    // rotation handle stays the rotation's.
-    const std::optional<Pick> pick = pickHandle(viewer, *plane, kind, event.scenePos);
+    // rotation handle stays the rotation's. While a ray arc waits for its
+    // second click, that click is the arc's.
+    const std::optional<Pick> pick = _arcFirst ? std::nullopt : pickHandle(viewer, *plane, kind, event.scenePos);
     if (!pick && _foreignHandleQuery && _foreignHandleQuery(viewer, event.scenePos)) {
         return false;
     }
@@ -752,15 +863,25 @@ bool RegionController::handlePress(CChunkedVolumeViewer* viewer, const CChunkedV
         drag.extentMax = regions::frameMaxIndexXyz(active->region.frame);
         drag.regionId = _activeId;
         drag.startRevision = active->region.revision;
-        drag.handle = pick->box;
-        drag.startBox = *regions::boxOf(active->region);
-        _draftBox = drag.startBox;
+        if (pick->arc) {
+            drag.arcHandle = pick->arc;
+            drag.startArc = *regions::arcOf(active->region);
+            drag.compiled = compiledArc(active->region);
+            _draftArc = drag.startArc;
+        } else {
+            drag.handle = *pick->box;
+            drag.startBox = *regions::boxOf(active->region);
+            _draftBox = drag.startBox;
+        }
         _drag = drag;
         setViewerCursor(viewer, Qt::ClosedHandCursor);
         emit draftChanged();
         return true;
     }
 
+    if (_tool == Tool::RayArc) {
+        return handleArcPress(viewer, event, *plane);
+    }
     if (_tool != Tool::Box) {
         return false;
     }
@@ -794,6 +915,12 @@ void RegionController::updateDrag(const CChunkedVolumeViewer::PointerEvent& even
     if (!std::isfinite(cursor[0]) || !std::isfinite(cursor[1]) || !std::isfinite(cursor[2])) {
         return;
     }
+    if (drag.arcHandle && drag.compiled) {
+        _draftArc = regions::dragArcHandle(drag.startArc, *drag.compiled, *drag.arcHandle, regions::toRegion(cursor, drag.map));
+        emit statusMessage(QString::fromStdString(regions::describeArc(*_draftArc)), 0);
+        emit draftChanged();
+        return;
+    }
     if (drag.kind == Drag::Kind::NewBox) {
         _draftBox = regions::boxFromDrag(drag.pressViewer, cursor, drag.planeKind, drag.plane.origin, _newBoxDepth, drag.map, drag.extentMax);
     } else {
@@ -813,8 +940,10 @@ void RegionController::finishDrag(const CChunkedVolumeViewer::PointerEvent& even
     updateDrag(event);
     const Drag drag = *_drag;
     const std::optional<regions::Box> box = _draftBox;
+    const std::optional<regions::RayArc> arc = _draftArc;
     _drag.reset();
     _draftBox.reset();
+    _draftArc.reset();
     if (drag.viewer) {
         setViewerCursor(drag.viewer.data(), std::nullopt);
     }
@@ -828,7 +957,9 @@ void RegionController::finishDrag(const CChunkedVolumeViewer::PointerEvent& even
                 setActive(id);
                 if (const regions::Loaded* loaded = find(id)) {
                     emit statusMessage(
-                        QStringLiteral("%1: %2").arg(QString::fromStdString(loaded->region.name), boxText(*regions::boxOf(loaded->region))), 4000);
+                        QStringLiteral("%1: %2")
+                            .arg(QString::fromStdString(loaded->region.name), QString::fromStdString(regions::describeShape(loaded->region.shape))),
+                        4000);
                 }
             }
             return;
@@ -858,14 +989,22 @@ void RegionController::finishDrag(const CChunkedVolumeViewer::PointerEvent& even
     if (!drag.moved || !loaded) {
         return;
     }
-    if (!box || *box == drag.startBox) {
-        return;
-    }
     regions::Region next = loaded->region;
-    next.shape = *box;
+    if (drag.arcHandle) {
+        if (!arc || *arc == drag.startArc) {
+            return;
+        }
+        next.shape = *arc;
+    } else {
+        if (!box || *box == drag.startBox) {
+            return;
+        }
+        next.shape = *box;
+    }
     const Result result = update(std::move(next), drag.startRevision);
     if (result.ok() && result.region) {
-        emit statusMessage(tr("%1: %2").arg(QString::fromStdString(result.region->name), boxText(*box)), 4000);
+        emit statusMessage(
+            tr("%1: %2").arg(QString::fromStdString(result.region->name), QString::fromStdString(regions::describeShape(result.region->shape))), 4000);
     }
 }
 
@@ -876,6 +1015,9 @@ void RegionController::cancelDrag(bool announce)
     }
     if (_drag && _drag->viewer) {
         setViewerCursor(_drag->viewer.data(), std::nullopt);
+    }
+    if (_drag && _drag->arcHandle) {
+        _draftArc.reset();
     }
     _drag.reset();
     _draftBox.reset();
@@ -910,11 +1052,11 @@ void RegionController::updateHoverCursor(CChunkedVolumeViewer* viewer, const CCh
     }
     const regions::PlaneKind kind = regions::classifyPlane(*plane);
     std::optional<Qt::CursorShape> shape;
-    if (const auto pick = pickHandle(viewer, *plane, kind, event.scenePos)) {
+    if (const auto pick = _arcFirst ? std::nullopt : pickHandle(viewer, *plane, kind, event.scenePos)) {
         shape = cursorFor(viewer, *pick);
     } else if (_foreignHandleQuery && _foreignHandleQuery(viewer, event.scenePos)) {
         // A press here rotates the plane; keep the viewer's own cursor.
-    } else if (_tool == Tool::Box) {
+    } else if (_tool == Tool::Box || (_tool == Tool::RayArc && kind == regions::PlaneKind::AxisZ)) {
         shape = Qt::CrossCursor;
     }
     setViewerCursor(viewer, shape);
@@ -1040,7 +1182,11 @@ std::vector<RegionController::LevelEstimate> RegionController::levelEstimates(co
         return estimates;
     }
     const std::uint64_t voxelBytes = volume->volume->dtype() == vc::render::ChunkDtype::UInt16 ? 2 : 1;
-    for (const auto& [level, voxels] : regions::levelVoxelCounts(*volume->volume, *regions::boxOf(loaded->region), *check.map)) {
+    const auto spec = specOf(loaded->region);
+    if (!spec) {
+        return estimates;
+    }
+    for (const auto& [level, voxels] : regions::levelVoxelCounts(*volume->volume, *spec, *check.map)) {
         estimates.push_back({level, voxels, voxels * voxelBytes});
     }
     return estimates;
@@ -1055,6 +1201,19 @@ int RegionController::autoLevel(const std::vector<LevelEstimate>& estimates)
         }
     }
     return estimates.empty() ? 0 : estimates.back().level;
+}
+
+std::optional<regions::ShapeSpec> RegionController::specOf(const regions::Region& region) const
+{
+    regions::ShapeSpec spec;
+    spec.shape = region.shape;
+    if (regions::arcOf(region)) {
+        spec.arc = compiledArc(region);
+        if (!spec.arc) {
+            return std::nullopt;
+        }
+    }
+    return spec;
 }
 
 RegionController::Result RegionController::checkMeasurable(const QString& id, const ResolvedVolume& volume, regions::FrameMap* map) const
@@ -1166,13 +1325,17 @@ RegionController::Result RegionController::startStats(const StatsJob& job)
             return check;
         }
         input.regions.push_back(find(id)->region);
+        auto spec = specOf(find(id)->region);
+        if (!spec) {
+            return refuse(Code::Incompatible, tr("Region %1: the ray arc's umbilicus cannot be built").arg(id));
+        }
+        input.specs.push_back(std::move(*spec));
         input.maps.push_back(map);
     }
     const std::uint64_t voxelBytes = dtype == vc::render::ChunkDtype::UInt16 ? 2 : 1;
     for (std::size_t i = 0; i < input.regions.size(); ++i) {
-        const regions::Box& box = *regions::boxOf(input.regions[i]);
-        const int level = job.level >= 0 ? job.level : regions::chooseLevel(*volume->volume, box, input.maps[i], input.request.voxelBudget);
-        const auto range = regions::boxIndexRange(box, input.maps[i], level, volume->volume->shape(level));
+        const int level = job.level >= 0 ? job.level : regions::chooseLevel(*volume->volume, input.specs[i], input.maps[i], input.request.voxelBudget);
+        const auto range = regions::shapeIndexRange(input.specs[i], input.maps[i], level, volume->volume->shape(level));
         const QString name = QString::fromStdString(input.regions[i].name);
         if (range.empty()) {
             return refuse(Code::Invalid, tr("Region %1 is outside volume %2").arg(name, QString::fromStdString(volume->id)), QStringLiteral("ids"));
@@ -1263,8 +1426,7 @@ RegionController::Result RegionController::startStats(const StatsJob& job)
             progress.cancel = cancel.get();
             progress.report = [fraction, i, n](double f) { fraction->store((static_cast<double>(i) + f) / static_cast<double>(n)); };
             std::string error;
-            auto stats =
-                regions::computeStats(*input.volume, input.volumeId, *regions::boxOf(input.regions[i]), input.maps[i], input.request, progress, &error);
+            auto stats = regions::computeStats(*input.volume, input.volumeId, input.specs[i], input.maps[i], input.request, progress, &error);
             if (!stats) {
                 output.error = error;
                 return output;
@@ -1323,7 +1485,11 @@ RegionController::Result RegionController::startExport(const QString& id, const 
     }
     input.request.outDir = outDir.isEmpty() ? regions::defaultExportDir(_store.directory(), input.region.id, input.request.created)
                                             : std::filesystem::path(outDir.toStdU16String());
-    const std::uint64_t bytes = regions::estimateExportBytes(*input.volume, *regions::boxOf(input.region), input.map, level);
+    const auto spec = specOf(input.region);
+    if (!spec) {
+        return refuse(Code::Incompatible, tr("The ray arc's umbilicus cannot be built"));
+    }
+    const std::uint64_t bytes = regions::estimateExportBytes(*input.volume, *spec, input.map, level);
     if (bytes == 0) {
         return refuse(
             Code::Invalid, tr("Region %1 is outside volume %2").arg(QString::fromStdString(input.region.name), QString::fromStdString(volume->id)));
@@ -1434,4 +1600,294 @@ void RegionController::trashStats(const std::string& id)
     if (ec) {
         Logger()->warn("Regions: could not move statistics {} to {}: {}", from.string(), to.string(), ec.message());
     }
+}
+
+// --- Ray arcs ---
+
+void RegionController::compileCurrentUmbilicus()
+{
+    _umbilicusCompiled.reset();
+    const auto frame = currentFrame();
+    if (!_umbilicus.available || !frame) {
+        return;
+    }
+    regions::RayArc probe;
+    probe.umbilicus = _umbilicus.ref;
+    std::string error;
+    if (auto compiled = regions::compileArc(probe, *frame, &error)) {
+        _umbilicusCompiled = std::make_shared<const regions::CompiledArc>(std::move(*compiled));
+    } else {
+        _umbilicus.available = false;
+        _umbilicus.message = tr("The umbilicus could not be built for this volume: %1").arg(QString::fromStdString(error));
+    }
+}
+
+void RegionController::refreshUmbilicusState()
+{
+    _umbilicus = {};
+    _umbilicusCompiled.reset();
+    const auto pkg = _state ? _state->vpkg() : nullptr;
+    if (!pkg || !_state->currentVolume()) {
+        _umbilicus.message = tr("Open a volume first.");
+        return;
+    }
+    const vc3d::annotation::UmbilicusResolution resolved = vc3d::annotation::resolveAnnotationUmbilicus(*pkg, _volumeFrame);
+    const QString remedy =
+        tr("Attach one with File > Attach Umbilicus..., or put an umbilicus.json next to the project file and reopen the project.");
+    if (resolved.path.empty()) {
+        QString reason = resolved.error.empty() ? tr("No umbilicus.") : tr("No usable umbilicus: %1").arg(QString::fromStdString(resolved.error));
+        for (const auto& candidate : resolved.ambiguous) {
+            reason += QLatin1Char('\n') + QString::fromStdString(candidate.string());
+        }
+        _umbilicus.message = reason + QLatin1Char('\n') + remedy;
+        return;
+    }
+    const QString file = QString::fromStdString(resolved.path.filename().string());
+    if (resolved.stampContradiction) {
+        _umbilicus.message = tr("Umbilicus %1 refused: %2").arg(file, QString::fromStdString(*resolved.stampContradiction));
+        return;
+    }
+    if (resolved.action != vc::core::util::UmbilicusLoadAction::Apply || !resolved.scale) {
+        // UseLegacy is refused like the Fiber Map does: there is no legacy
+        // reading of an unstamped file that regions could trust.
+        _umbilicus.message =
+            tr("Could not determine the frame of umbilicus %1. Stamp it with volume_width, volume_height and volume_slices.").arg(file);
+        return;
+    }
+    if (resolved.info.controlPoints.empty()) {
+        _umbilicus.message = tr("Umbilicus %1 has no points.").arg(file);
+        return;
+    }
+    _umbilicus.available = true;
+    _umbilicus.ref.sourcePath = resolved.path.string();
+    _umbilicus.ref.scale = resolved.scale->factor;
+    switch (resolved.scale->source) {
+        case vc::core::util::UmbilicusScaleSource::StampedDimensions:
+            _umbilicus.ref.scaleSource = "stamped_dimensions";
+            break;
+        case vc::core::util::UmbilicusScaleSource::StampedVoxelSize:
+            _umbilicus.ref.scaleSource = "stamped_voxel_size";
+            break;
+        case vc::core::util::UmbilicusScaleSource::InferredFromGrid:
+            _umbilicus.ref.scaleSource = "inferred_from_grid";
+            break;
+    }
+    _umbilicus.ref.seam = _arcSeam.toStdString();
+    for (const auto& point : vc3d::annotation::framedControlPoints(resolved)) {
+        _umbilicus.ref.controlPoints.emplace_back(point[0], point[1], point[2]);
+    }
+    _umbilicus.message = tr("Umbilicus: %1").arg(file);
+    compileCurrentUmbilicus();
+}
+
+void RegionController::setArcIncreasing(bool increasing)
+{
+    if (increasing == _arcIncreasing) {
+        return;
+    }
+    _arcIncreasing = increasing;
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(kArcIncreasingKey, _arcIncreasing);
+    emit toolChanged();
+}
+
+void RegionController::setArcSeam(const QString& seam)
+{
+    if (!regions::isValidSeam(seam.toStdString()) || seam == _arcSeam) {
+        return;
+    }
+    _arcSeam = seam;
+    _umbilicus.ref.seam = seam.toStdString();
+    compileCurrentUmbilicus();
+    QSettings settings(vc3d::settingsFilePath(), QSettings::IniFormat);
+    settings.setValue(kArcSeamKey, _arcSeam);
+    emit toolChanged();
+}
+
+bool RegionController::embedProjectUmbilicus(regions::RayArc& arc, const regions::FrameMap& map, const std::string& seam) const
+{
+    if (!_umbilicus.available) {
+        return false;
+    }
+    arc.umbilicus = _umbilicus.ref;
+    arc.umbilicus.seam = seam;
+    const auto current = currentMap();
+    const double scale = current ? current->regionToViewer() * map.viewerToRegion() : 1.0;
+    for (auto& point : arc.umbilicus.controlPoints) {
+        point *= scale;
+    }
+    return true;
+}
+
+RegionController::Result RegionController::refreshUmbilicus(const QString& id, std::optional<std::uint64_t> expectedRevision)
+{
+    Result result;
+    const regions::Loaded* loaded = find(id);
+    if (!loaded || !regions::arcOf(loaded->region)) {
+        result.code = Code::NotFound;
+        result.message = tr("No ray arc with id %1").arg(id);
+        result.param = QStringLiteral("id");
+        return result;
+    }
+    if (!_umbilicus.available) {
+        result.code = Code::NotFound;
+        result.message = _umbilicus.message;
+        return result;
+    }
+    const regions::FrameCheck check = frameCheck(loaded->region);
+    if (!check.map) {
+        result.code = Code::Incompatible;
+        result.message = QString::fromStdString(check.reason);
+        return result;
+    }
+    regions::RayArc arc = *regions::arcOf(loaded->region);
+    embedProjectUmbilicus(arc, *check.map, arc.umbilicus.seam);
+    regions::Region next = loaded->region;
+    next.shape = arc;
+    const QString name = QString::fromStdString(loaded->region.name);
+    result = update(std::move(next), expectedRevision ? expectedRevision : std::optional<std::uint64_t>(loaded->region.revision));
+    if (result.ok()) {
+        emit statusMessage(tr("Embedded the project's umbilicus in %1").arg(name), 4000);
+    }
+    return result;
+}
+
+std::shared_ptr<const regions::CompiledArc> RegionController::compiledArc(const regions::Region& region) const
+{
+    const regions::RayArc* arc = regions::arcOf(region);
+    if (!arc) {
+        return nullptr;
+    }
+    const auto it = _compiledArcs.find(region.id);
+    if (it != _compiledArcs.end() && it->second.first == region.revision && it->second.second) {
+        return it->second.second;
+    }
+    std::string error;
+    auto compiled = regions::compileArc(*arc, region.frame, &error);
+    std::shared_ptr<const regions::CompiledArc> shared;
+    if (compiled) {
+        shared = std::make_shared<const regions::CompiledArc>(std::move(*compiled));
+    } else {
+        Logger()->warn("Regions: ray arc {} cannot be drawn: {}", region.id, error);
+    }
+    _compiledArcs[region.id] = {region.revision, shared};
+    return shared;
+}
+
+std::optional<std::array<cv::Vec3d, 2>> RegionController::regionBounds(const regions::Region& region) const
+{
+    if (const regions::Box* box = regions::boxOf(region)) {
+        return std::array<cv::Vec3d, 2>{cv::Vec3d(box->min[0], box->min[1], box->min[2]), cv::Vec3d(box->max[0], box->max[1], box->max[2])};
+    }
+    const auto compiled = compiledArc(region);
+    if (!compiled) {
+        return std::nullopt;
+    }
+    return regions::arcBounds(*regions::arcOf(region), *compiled);
+}
+
+std::optional<cv::Vec3d> RegionController::regionPointOf(const CChunkedVolumeViewer::PointerEvent& event, const regions::FrameMap& map) const
+{
+    const cv::Vec3d v(event.volumePos[0], event.volumePos[1], event.volumePos[2]);
+    if (!std::isfinite(v[0]) || !std::isfinite(v[1]) || !std::isfinite(v[2])) {
+        return std::nullopt;
+    }
+    return regions::toRegion(v, map);
+}
+
+void RegionController::clearArcDraft()
+{
+    const bool had = _arcFirst.has_value() || (_draftArc && !(_drag && _drag->arcHandle));
+    _arcFirst.reset();
+    _arcViewer.clear();
+    if (!(_drag && _drag->arcHandle)) {
+        _draftArc.reset();
+    }
+    if (had) {
+        emit draftChanged();
+    }
+}
+
+bool RegionController::handleArcPress(CChunkedVolumeViewer* viewer, const CChunkedVolumeViewer::PointerEvent& event, const regions::Plane& plane)
+{
+    if (regions::classifyPlane(plane) != regions::PlaneKind::AxisZ) {
+        emit statusMessage(tr("Draw ray arcs in the XY view."), 4000);
+        return false;
+    }
+    const auto frame = currentFrame();
+    const auto map = currentMap();
+    if (!frame || !map) {
+        emit statusMessage(unavailableReason(), 5000);
+        return false;
+    }
+    if (!_umbilicus.available) {
+        emit statusMessage(_umbilicus.message, 6000);
+        return false;
+    }
+    const auto point = regionPointOf(event, *map);
+    const auto compiled = _umbilicusCompiled;
+    if (!point || !compiled) {
+        return false;
+    }
+    if (!_arcFirst || _arcViewer != viewer) {
+        _arcFirst = *point;
+        _arcViewer = viewer;
+        _draftArc.reset();
+        emit statusMessage(
+            tr("First corner at theta %1 deg, r %2. Click the opposite corner (Esc cancels).")
+                .arg(regions::thetaDeg(*compiled, *point), 0, 'f', 1)
+                .arg(regions::radiusXY(*compiled, *point), 0, 'f', 1),
+            0);
+        emit draftChanged();
+        return true;
+    }
+    const double slice = regions::toRegion(plane.origin, *map)[2];
+    const auto arc =
+        regions::arcFromClicks(*compiled, *_arcFirst, *point, _arcIncreasing, slice, _newBoxDepth, regions::frameMaxIndexXyz(*frame)[2]);
+    if (!arc) {
+        emit statusMessage(tr("Move at least one voxel inward or outward from the first corner."), 4000);
+        return true;
+    }
+    regions::Region draft;
+    regions::RayArc shaped = *arc;
+    embedProjectUmbilicus(shaped, *map, _arcSeam.toStdString());
+    draft.shape = shaped;
+    draft.color.clear();
+    clearArcDraft();
+    const Result result = create(std::move(draft));
+    if (!result.ok() || !result.region) {
+        return true;
+    }
+    const QString id = QString::fromStdString(result.region->id);
+    setActive(id);
+    emit statusMessage(tr("Created %1: %2").arg(QString::fromStdString(result.region->name), QString::fromStdString(regions::describeArc(shaped))), 5000);
+    // Switch to Edit after this press is delivered: a tool change cancels
+    // owned gestures, which must not happen inside the press the gate is
+    // still taking.
+    QMetaObject::invokeMethod(this, [this]() { setEditing(true); }, Qt::QueuedConnection);
+    return true;
+}
+
+void RegionController::updateArcPreview(CChunkedVolumeViewer* viewer, const CChunkedVolumeViewer::PointerEvent& event)
+{
+    const auto plane = planeOf(viewer);
+    const auto frame = currentFrame();
+    const auto map = currentMap();
+    if (!_arcFirst || !plane || !frame || !map || !_umbilicus.available) {
+        return;
+    }
+    const auto point = regionPointOf(event, *map);
+    const auto compiled = _umbilicusCompiled;
+    if (!point || !compiled) {
+        return;
+    }
+    const double slice = regions::toRegion(plane->origin, *map)[2];
+    auto arc = regions::arcFromClicks(*compiled, *_arcFirst, *point, _arcIncreasing, slice, _newBoxDepth, regions::frameMaxIndexXyz(*frame)[2]);
+    if (!arc) {
+        return;
+    }
+    arc->umbilicus = _umbilicus.ref;
+    _draftArc = arc;
+    emit statusMessage(QString::fromStdString(regions::describeArc(*arc)), 0);
+    emit draftChanged();
 }

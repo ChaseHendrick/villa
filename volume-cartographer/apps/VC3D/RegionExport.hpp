@@ -35,8 +35,8 @@ struct ExportResult {
     bool ok() const { return error.empty() && !canceled; }
 };
 
-// Uncompressed size of the crop at `level`.
-std::uint64_t estimateExportBytes(Volume& volume, const Box& box, const FrameMap& map, int level);
+// Uncompressed size of the crop at `level` (a ray arc adds a uint8 mask).
+std::uint64_t estimateExportBytes(Volume& volume, const ShapeSpec& spec, const FrameMap& map, int level);
 
 // `<regions dir>/exports/<first 8 of id>-<YYYYMMDDTHHMMSSZ>-<4 hex>`, from an
 // ISO 8601 UTC time such as "2026-10-18T14:10:00Z".

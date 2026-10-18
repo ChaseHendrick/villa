@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -39,9 +40,28 @@ struct LevelRange {
 // the box, clipped to the level's shape (z y x).
 LevelRange boxIndexRange(const Box& box, const FrameMap& regionToVolume, int level, const std::array<int, 3>& levelShapeZyx);
 
+// What is measured: a region's shape and, for a ray arc, its compiled
+// umbilicus (immutable, shared by workers).
 // Statistics and crop exports read at most this many bytes of voxels per
 // region.
 inline constexpr std::uint64_t kMaxReadBytes = std::uint64_t{8} << 30;
+
+struct ShapeSpec {
+    Shape shape = Box{};
+    std::shared_ptr<const CompiledArc> arc;
+    ShapeSpec() = default;
+    // A box needs nothing compiled, so boxes convert implicitly.
+    ShapeSpec(const Box& box) : shape(box) {}  // NOLINT(google-explicit-constructor)
+};
+// The spec of a region's shape; nullopt with `error` set when a ray arc's
+// umbilicus cannot be built.
+std::optional<ShapeSpec> shapeSpec(const Region& region, std::string* error);
+// The level index range scanned for a shape: a box's exact range, or the range
+// of a ray arc's bounding box (voxels in it are then tested one by one).
+LevelRange shapeIndexRange(const ShapeSpec& spec, const FrameMap& regionToVolume, int level, const std::array<int, 3>& levelShapeZyx);
+// Whether level-L index (z, y, x) is inside the shape: its region point
+// i * 2^L / k is.
+bool containsIndex(const ShapeSpec& spec, const FrameMap& regionToVolume, int level, int z, int y, int x);
 
 struct Progress {
     std::function<void(double)> report;
@@ -67,7 +87,8 @@ using ChunkVisitor = std::function<void(int worker, const ChunkView& chunk)>;
 
 // Visits every chunk of `level` meeting the range once, reading with
 // IChunkedArray::getChunkBlocking on `threads` dedicated workers after a
-// background prefetch. Returns false on a read error or a cancel (check
+// background prefetch. Chunks whose in-range part `keepChunk` rejects are
+// neither read nor visited. Returns false on a read error or a cancel (check
 // progress.canceled()); `error` is set on a read error.
 bool forEachChunk(
     Volume& volume,
@@ -78,7 +99,8 @@ bool forEachChunk(
     const ChunkVisitor& visit,
     std::string* error,
     std::uint64_t* chunksRead = nullptr,
-    std::uint64_t* fillChunks = nullptr);
+    std::uint64_t* fillChunks = nullptr,
+    const std::function<bool(const cv::Vec3i& fromZyx, const cv::Vec3i& toZyx)>& keepChunk = {});
 
 struct StatsRequest {
     int level = -1;                          // -1: the finest stored level within voxelBudget
@@ -126,19 +148,21 @@ struct VolumeStats {
     double fractionAbove = 0;
     std::uint64_t chunksRead = 0;
     std::uint64_t fillChunks = 0;
+    std::uint64_t chunksSkipped = 0;
     double seconds = 0;
     bool canceled = false;
 };
 
-// The stored levels and their index-range sizes for a box, finest first.
-std::vector<std::pair<int, std::uint64_t>> levelVoxelCounts(Volume& volume, const Box& box, const FrameMap& map);
+// The stored levels and their scanned index-range sizes for a shape, finest
+// first (for a ray arc, the size of its bounding range).
+std::vector<std::pair<int, std::uint64_t>> levelVoxelCounts(Volume& volume, const ShapeSpec& spec, const FrameMap& map);
 // The finest stored level whose range fits the budget, else the coarsest.
-int chooseLevel(Volume& volume, const Box& box, const FrameMap& map, std::uint64_t voxelBudget);
+int chooseLevel(Volume& volume, const ShapeSpec& spec, const FrameMap& map, std::uint64_t voxelBudget);
 
-// Statistics of the box on one volume. nullopt with `error` set on a failure;
-// a cancel returns stats with canceled set and partial numbers.
+// Statistics of the shape on one volume. nullopt with `error` set on a
+// failure; a cancel returns stats with canceled set and partial numbers.
 std::optional<VolumeStats> computeStats(
-    Volume& volume, const std::string& volumeId, const Box& box, const FrameMap& map, const StatsRequest& request, const Progress& progress, std::string* error);
+    Volume& volume, const std::string& volumeId, const ShapeSpec& spec, const FrameMap& map, const StatsRequest& request, const Progress& progress, std::string* error);
 
 // The stats file document (schema vc3d.region_stats, version 1). `created`
 // is an ISO 8601 UTC time.
