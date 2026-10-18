@@ -11,6 +11,7 @@
 #include "VolumeDisplayNames.hpp"
 #include "OpenDataSegmentCache.hpp"
 #include "VCSettings.hpp"
+#include "vc/core/types/Volume.hpp"
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/util/MemMap.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -1229,6 +1230,62 @@ TEST_CASE("Project region paths use the same per-project folder rule as fibers")
     CHECK(vc3d::projectAnnotationDirectory({}, "regions").empty());
     CHECK(vc3d::projectAnnotationDirectory("projects/My Project.volpkg.json", "fibers") ==
           vc3d::projectFiberDirectory("projects/My Project.volpkg.json"));
+}
+
+TEST_CASE("annotationFrameForVolume derives the frame the fiber code always derived")
+{
+    const auto root = std::filesystem::temp_directory_path() / "vc3d-annotation-frame-test";
+    std::filesystem::remove_all(root);
+    const auto path = root / "frame.zarr";
+    {
+        Volume::ZarrCreateOptions opts;
+        opts.shapeZYX = {40, 30, 20};
+        opts.chunkShapeZYX = {16, 16, 16};
+        opts.numLevels = 1;
+        opts.dtype = vc::render::ChunkDtype::UInt8;
+        opts.voxelSize = 7.91;
+        opts.name = "annotation-frame-test";
+        opts.uuid = "annotation-frame-test";
+        opts.overwriteExisting = true;
+        opts.compressor = "none";
+        Volume::New(path, opts);
+    }
+    auto volume = Volume::New(path);
+
+    SUBCASE("a plain local volume is its own frame")
+    {
+        const auto frame = vc3d::opendata::annotationFrameForVolume(nullptr, std::string{}, *volume);
+        CHECK(frame.factor == 1.0);
+        CHECK(frame.extentXyz == std::array<double, 3>{20.0, 30.0, 40.0});
+        REQUIRE(frame.voxelSizeUm);
+        CHECK(*frame.voxelSizeUm == doctest::Approx(7.91));
+    }
+    SUBCASE("a tagged volume uses the exact coordinate factor from its tags")
+    {
+        auto pkg = VolumePkg::newEmpty();
+        REQUIRE(pkg->addVolumeEntry(
+            path.string(),
+            {"vc-open-data-coordinate-space:sample/vol@L0",
+             "vc-open-data-source-coordinate-level:2",
+             "vc-open-data-source-original-resolution:1.9775"}));
+        const auto ids = pkg->volumeIDs();
+        REQUIRE(ids.size() == 1);
+        const auto loaded = pkg->volume(ids.front());
+        REQUIRE(loaded);
+        const auto frame = vc3d::opendata::annotationFrameForVolume(pkg.get(), ids.front(), *loaded);
+        const auto expected = vc3d::annotation::deriveAnnotationFrame(
+            loaded->voxelSize(),
+            loaded->baseScaleLevel(),
+            4.0,
+            1.9775,
+            {static_cast<double>(loaded->sliceWidth()), static_cast<double>(loaded->sliceHeight()), static_cast<double>(loaded->numSlices())});
+        CHECK(frame.factor == 4.0);
+        CHECK(frame.extentXyz == expected.extentXyz);
+        CHECK(frame.extentXyz == std::array<double, 3>{80.0, 120.0, 160.0});
+        REQUIRE(frame.voxelSizeUm);
+        CHECK(*frame.voxelSizeUm == doctest::Approx(1.9775));
+    }
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("Catalog source selection is independent of derived representations")

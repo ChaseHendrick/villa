@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AnnotationFrame.hpp"
+
 #include "vc/core/types/VolumePkg.hpp"
 #include "vc/core/types/Volume.hpp"
 #include "vc/core/util/QuadSurface.hpp"
@@ -172,6 +174,48 @@ inline void copyVolumeCoordinateIdentityToSurface(
 {
     copyCoordinateIdentityToSurface(
         surface, coordinateIdentityForVolume(pkg, loadedVolumeId));
+}
+
+// The annotation frame (the grid fibers, the umbilicus and regions index) of
+// `volume`, the volume `volumeId` of `pkg`. `pkg` may be null for a volume
+// outside a project, which is then its own frame unless it is a rebased store.
+//
+// The exact coordinate factor comes straight from the tags, not through
+// coordinateIdentityForVolume(): that helper withholds the whole identity when
+// the physical resolution is missing, and the factor is an exact integer
+// statement that must not be lost over absent physical metadata. The stamped
+// resolution, where present, is passed as the physical figure it is;
+// deriveAnnotationFrame() never derives counts from it. Returns an empty frame
+// when the volume cannot report its geometry.
+inline vc3d::annotation::AnnotationFrame annotationFrameForVolume(
+    const VolumePkg* pkg,
+    const std::string& volumeId,
+    const Volume& volume)
+{
+    try {
+        std::optional<double> exactFactor;
+        std::optional<double> stampedResolution;
+        if (pkg && !volumeId.empty()) {
+            if (const auto identity =
+                    coordinateIdentityFromTags(pkg->volumeTags(volumeId))) {
+                exactFactor =
+                    static_cast<double>(identity->sourceCoordinateScaleFactor);
+                if (identity->sourceOriginalResolution > 0.0) {
+                    stampedResolution = identity->sourceOriginalResolution;
+                }
+            }
+        }
+        return vc3d::annotation::deriveAnnotationFrame(
+            volume.voxelSize(),
+            volume.baseScaleLevel(),
+            exactFactor,
+            stampedResolution,
+            {static_cast<double>(volume.sliceWidth()),
+             static_cast<double>(volume.sliceHeight()),
+             static_cast<double>(volume.numSlices())});
+    } catch (...) {
+        return {};
+    }
 }
 
 } // namespace vc3d::opendata
