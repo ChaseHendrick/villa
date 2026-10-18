@@ -1216,6 +1216,21 @@ TEST_CASE("Project fiber paths share annotation filename sanitization")
     CHECK(vc3d::projectFiberDirectory({}).empty());
 }
 
+TEST_CASE("Project region paths use the same per-project folder rule as fibers")
+{
+    CHECK(vc3d::projectAnnotationDirectory("projects/My Project.volpkg.json", "regions") ==
+          std::filesystem::path("projects/regions/My_Project.volpkg.json"));
+    CHECK(vc3d::projectAnnotationDirectory("local.volpkg.json", "regions") ==
+          std::filesystem::path("regions/local.volpkg.json"));
+    CHECK(vc3d::projectAnnotationDirectory({}, "regions", "legacy") ==
+          std::filesystem::path("legacy/regions/legacy"));
+    // An unsaved project (no path, no package directory) has no folder, so
+    // nothing is ever written to the working directory.
+    CHECK(vc3d::projectAnnotationDirectory({}, "regions").empty());
+    CHECK(vc3d::projectAnnotationDirectory("projects/My Project.volpkg.json", "fibers") ==
+          vc3d::projectFiberDirectory("projects/My Project.volpkg.json"));
+}
+
 TEST_CASE("Catalog source selection is independent of derived representations")
 {
     OpenDataSample sample;
