@@ -38,4 +38,17 @@ void AgentBridgeServer::registerThemeHandlers()
             .mcp = {.tool = QStringLiteral("vc3d_import_theme")},
         },
         [this](const QJsonValue& p) { return handleThemeImport(p); });
+
+    registerMethod(
+        {
+            .name = QStringLiteral("theme.export"),
+            .params = {
+                Params::requiredString(QStringLiteral("path")),
+                Params::optionalString(QStringLiteral("id")),
+                Params::optionalBoolean(QStringLiteral("overwrite"), false),
+            },
+            .errors = {-32602, -32007, -32005},
+            .mcp = {.tool = QStringLiteral("vc3d_export_theme")},
+        },
+        [this](const QJsonValue& p) { return handleThemeExport(p); });
 }

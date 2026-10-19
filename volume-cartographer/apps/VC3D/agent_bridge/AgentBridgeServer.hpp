@@ -304,6 +304,7 @@ private:
     QJsonObject handleThemeList(const QJsonValue& params);
     QJsonObject handleThemeSet(const QJsonValue& params);
     QJsonObject handleThemeImport(const QJsonValue& params);
+    QJsonObject handleThemeExport(const QJsonValue& params);
 
     // --- Open Data manifest acquisition ---
     // Serves the cached manifest synchronously when available and `refresh` is

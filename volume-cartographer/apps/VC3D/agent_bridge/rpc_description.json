@@ -3221,6 +3221,34 @@
         "type": "object"
       }
     },
+    "theme.export": {
+      "errors": [
+        -32602,
+        -32007,
+        -32005
+      ],
+      "mcp": {
+        "tool": "vc3d_export_theme"
+      },
+      "params": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "overwrite": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
     "theme.import": {
       "errors": [
         -32602,

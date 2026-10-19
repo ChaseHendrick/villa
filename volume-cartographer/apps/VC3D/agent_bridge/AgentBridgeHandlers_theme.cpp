@@ -62,6 +62,7 @@ QJsonObject AgentBridgeServer::handleThemeList(const QJsonValue& params)
     result["themes"] = themeListJson();
     result["active"] = themes.currentThemeId();
     result["problems"] = problemsJson(themes.discoveryProblems());
+    result["userFolder"] = themes.userThemesDirectory();
     return result;
 }
 
@@ -138,5 +139,52 @@ QJsonObject AgentBridgeServer::handleThemeImport(const QJsonValue& params)
     result["id"] = outcome.id;
     result["path"] = outcome.installedPath;
     result["warnings"] = problemsJson(outcome.problems);
+    return result;
+}
+
+
+QJsonObject AgentBridgeServer::handleThemeExport(const QJsonValue& params)
+{
+    const QJsonObject p = params.toObject();
+    const QString path = p.value("path").toString().trimmed();
+    const QString id = p.value("id").toString().trimmed();
+    const bool overwrite = p.value("overwrite").toBool(false);
+    auto& themes = ThemeManager::instance();
+    if (!QDir::isAbsolutePath(path)) {
+        QJsonObject data{{"param", "path"}};
+        throw AgentBridgeError{-32602, "path must be absolute", data};
+    }
+    if (!path.endsWith(QLatin1String(vc3d::theme::kThemeFileSuffix), Qt::CaseInsensitive)) {
+        QJsonObject data{{"param", "path"}};
+        throw AgentBridgeError{-32602, "path must end in .vc3dtheme", data};
+    }
+    const QString source = id.isEmpty() ? themes.currentThemeId() : vc3d::theme::normalizeThemeId(id);
+    if (!themes.registry().contains(source))
+        throwUnknownTheme(id);
+    if (QFileInfo::exists(path) && !overwrite) {
+        QJsonObject data{{"path", path}};
+        throw AgentBridgeError{-32005, "the file exists; pass overwrite=true to replace it", data};
+    }
+
+    // The menu's export also creates the themes folder, the usual target.
+    QDir().mkpath(themes.userThemesDirectory());
+    QString error;
+    vc3d::theme::ThemeProblems warnings;
+    if (!themes.exportTheme(path, source, &error, &warnings)) {
+        QJsonObject data{{"detail", error}};
+        throw AgentBridgeError{-32005, QStringLiteral("theme.export failed"), data};
+    }
+    // As after the menu's export, a template written into a themes folder is
+    // listed at once.
+    themes.reloadThemes();
+    const QString listedId = vc3d::theme::normalizeThemeId(QFileInfo(path).completeBaseName());
+    const auto* listed = themes.registry().find(listedId);
+    const bool isListed = listed && QFileInfo(listed->filePath) == QFileInfo(path);
+
+    QJsonObject result;
+    result["path"] = path;
+    result["source"] = source;
+    result["listedAs"] = isListed ? QJsonValue(listedId) : QJsonValue(QJsonValue::Null);
+    result["warnings"] = problemsJson(warnings);
     return result;
 }

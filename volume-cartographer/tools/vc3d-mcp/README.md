@@ -223,7 +223,7 @@ Tool names use a `vc3d_` prefix and snake_case. The surface includes:
 - points, tags, winding annotations, seeding, and push/pull;
 - fiber annotation, Atlas search, and Lasagna workflows;
 - tracing, flattening, rendering, jobs, progress, and cancellation;
-- VC3D themes: listing, switching, and importing.
+- VC3D themes: listing, switching, importing, and exporting.
 
 The MCP client displays each installed tool with its current description and
 input schema; that generated list is the useful reference and cannot drift

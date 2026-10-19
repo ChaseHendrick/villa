@@ -18,6 +18,7 @@ import unittest
 from tests.support import EchoBridgeServer
 from vc3d_mcp import core
 from vc3d_mcp.tools.theme import (
+    vc3d_export_theme,
     vc3d_import_theme,
     vc3d_list_themes,
     vc3d_set_theme,
@@ -59,6 +60,14 @@ class ThemeToolTest(unittest.IsolatedAsyncioTestCase):
         self._assert_wire("theme.import", {"path": "/tmp/ocean.vc3dtheme", "overwrite": False})
         await vc3d_import_theme("/tmp/ocean", overwrite=True)
         self._assert_wire("theme.import", {"path": "/tmp/ocean", "overwrite": True})
+
+    async def test_export_sends_id_only_when_given(self) -> None:
+        await vc3d_export_theme("/tmp/ocean.vc3dtheme")
+        self._assert_wire("theme.export", {"path": "/tmp/ocean.vc3dtheme", "overwrite": False})
+        await vc3d_export_theme("/tmp/light.vc3dtheme", id="modern-light", overwrite=True)
+        self._assert_wire(
+            "theme.export", {"path": "/tmp/light.vc3dtheme", "overwrite": True, "id": "modern-light"}
+        )
 
 
 if __name__ == "__main__":
