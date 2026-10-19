@@ -42,12 +42,6 @@ QJsonArray problemsJson(const vc3d::theme::ThemeProblems& problems)
     return list;
 }
 
-bool isThemePath(const QString& value)
-{
-    return value.contains(QLatin1Char('/')) || value.contains(QLatin1Char('\\')) ||
-           value.endsWith(QLatin1String(vc3d::theme::kThemeFileSuffix), Qt::CaseInsensitive);
-}
-
 [[noreturn]] void throwUnknownTheme(const QString& id)
 {
     QJsonObject data;
@@ -82,7 +76,7 @@ QJsonObject AgentBridgeServer::handleThemeSet(const QJsonValue& params)
         QJsonObject data{{"param", "id"}};
         throw AgentBridgeError{-32602, "id must not be blank", data};
     }
-    const bool path = isThemePath(id);
+    const bool path = vc3d::theme::looksLikeThemePath(id);
     if (path && !QDir::isAbsolutePath(id)) {
         QJsonObject data{{"param", "id"}};
         throw AgentBridgeError{-32602, "a theme path must be absolute", data};
