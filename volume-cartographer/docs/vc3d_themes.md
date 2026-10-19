@@ -397,6 +397,12 @@ and bright rooms. Import it, or try it for one run from the repository root:
 VC3D --theme volume-cartographer/apps/VC3D/themes/examples/high-contrast.vc3dtheme
 ```
 
+An installed VC3D (from `build_from_src_debian.sh`, `cmake --install` or
+the AppImage) does not include the examples folder: download the file from
+<https://raw.githubusercontent.com/ScrollPrize/villa/main/volume-cartographer/apps/VC3D/themes/examples/high-contrast.vc3dtheme>
+and import it. The Docker image keeps the source tree, so there the file is
+`/src/apps/VC3D/themes/examples/high-contrast.vc3dtheme`.
+
 ## Agent bridge
 
 Agents drive themes through these agent bridge methods (MCP tools in
@@ -406,7 +412,7 @@ errors.
 | Method | Does |
 |---|---|
 | `theme.list {rescan?}` (`vc3d_list_themes`) | Returns `{themes: [{id, name, author, description, source, path, colorScheme, active}], active, problems, userFolder}`; `source` is `builtin`, `user` or `path`, and `userFolder` is your themes folder. `rescan` scans the theme folders first. |
-| `theme.set {id, persist?}` (`vc3d_set_theme`) | Applies an installed theme, or a theme file or folder given by absolute path, live; saves it unless `persist` is false. Takes a second or two with a project open. |
+| `theme.set {id, persist?}` (`vc3d_set_theme`) | Applies an installed theme, or a theme file or folder given by absolute path, live; saves it unless `persist` is false, so pass `persist: false` for a temporary change such as a screenshot. Takes a second or two with a project open. |
 | `theme.import {path, overwrite?}` (`vc3d_import_theme`) | Validates and installs the theme at an absolute path; returns `{id, path, warnings}`, where `path` is the installed copy. Does not switch to it. |
 | `theme.export {path, id?, overwrite?}` (`vc3d_export_theme`) | Writes a theme (default: the active one) as a complete template to an absolute `.vc3dtheme` path, like Export Current Theme as Template; returns `{path, source, listedAs, warnings}`. Written into `userFolder`, it is listed at once as `listedAs`. |
 
