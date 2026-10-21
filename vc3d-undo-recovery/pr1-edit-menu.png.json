@@ -1,0 +1,26 @@
+{
+  "file": "pr1-edit-menu.png",
+  "for": "VC3D undo/redo draft PR (branch vc3d-undo-recovery-1)",
+  "shows": "Edit menu with Undo and Redo Segmentation Edit",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "a3a602e60 (branch tip)"
+  },
+  "width": 660,
+  "height": 118,
+  "bytes": 19907,
+  "sha256": "70ba3a8df9b151926dab0d734831a1aa76131d242d7dde89d72c47563a995634",
+  "made": {
+    "date": "20 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

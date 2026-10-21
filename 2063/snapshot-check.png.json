@@ -1,0 +1,27 @@
+{
+  "file": "snapshot-check.png",
+  "for": "ScrollPrize/villa#2063",
+  "shows": "where the vertex that started at the seed is in each snapshot, base and PR",
+  "kind": "terminal transcript of a real run, drawn from its saved log as text (lines verbatim; '#' lines, '...' lines, title bar and footer are labels)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "input": "published surface prediction 20250728140407-surface-20260413222639-surface-m7-L0-th0.2.zarr (read by the tool; its pixels are not shown)"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "before": "4eecd08",
+    "after": "c6acce081 (PR head)"
+  },
+  "width": 1450,
+  "height": 774,
+  "bytes": 120638,
+  "sha256": "e3ba2c799c272df643b742a799af7411e7dad107a8bfe758dd9f42b6eeb4212a",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

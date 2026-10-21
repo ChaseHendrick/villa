@@ -1,0 +1,27 @@
+{
+  "file": "domain-session-06.png",
+  "for": "VC3D agent bridge draft PRs (part 13)",
+  "shows": "after nine segmentation.approval_mask.undo calls, the stroke is gone",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035",
+    "note": "editable copy of w035 opened from VC3D's Open Data catalog"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "6b8380fa16 (top of the agent bridge branches, vc3d-agent-domain-v2)"
+  },
+  "width": 1280,
+  "height": 757,
+  "bytes": 509253,
+  "sha256": "4e5c238ee83fe5471046094191339fbe910c3a4c9d0a9b1a7e9c073ec8f5885a",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

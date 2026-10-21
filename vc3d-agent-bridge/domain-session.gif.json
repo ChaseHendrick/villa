@@ -1,0 +1,27 @@
+{
+  "file": "domain-session.gif",
+  "for": "VC3D agent bridge draft PRs (parts 6, 12 and 13)",
+  "shows": "segment.transform flip and back, Composite View on and off, approval stroke painted and undone, viewer.reset",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035",
+    "note": "editable copy of w035 opened from VC3D's Open Data catalog"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "6b8380fa16 (top of the agent bridge branches, vc3d-agent-domain-v2)"
+  },
+  "width": 1280,
+  "height": 758,
+  "bytes": 1449859,
+  "sha256": "077dcd0a43d9e2984582a84c5a745e6b99d9a978d5812976d291729537f9697f",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

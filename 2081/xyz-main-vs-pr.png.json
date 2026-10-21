@@ -1,0 +1,26 @@
+{
+  "file": "xyz-main-vs-pr.png",
+  "for": "ScrollPrize/villa#2081",
+  "shows": "x/y/z.tif hashes for main and the PR, no grids",
+  "kind": "table of hashes from the saved compare log",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "input": "published surface prediction 20250728140407-surface-20260413222639-surface-m7-L0-th0.2.zarr (read by the tool; its pixels are not shown)"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "d1b95150e, with and without fed86aa"
+  },
+  "width": 1560,
+  "height": 698,
+  "bytes": 47227,
+  "sha256": "f59d2482967c32be93e7b07b9a80784cda7ca87a7405fc1ed84376f103320701",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

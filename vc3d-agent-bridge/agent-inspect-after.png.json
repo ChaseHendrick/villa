@@ -1,0 +1,27 @@
+{
+  "file": "agent-inspect-after.png",
+  "for": "VC3D agent bridge draft PRs (part 4)",
+  "shows": "screenshot.capture of the Segmentation dock with reveal, next to ui.inspect of the same dock (269 nodes)",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035",
+    "note": "editable copy of w035 opened from VC3D's Open Data catalog"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "6b8380fa16 (top of the agent bridge branches, vc3d-agent-domain-v2)"
+  },
+  "width": 1158,
+  "height": 574,
+  "bytes": 117943,
+  "sha256": "5d3deb6dcf4e0dd72f04560daadbd4cb79b013820c95cb7001fcc3290c2a2b56",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

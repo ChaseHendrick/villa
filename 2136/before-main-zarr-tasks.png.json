@@ -1,0 +1,25 @@
+{
+  "file": "before-main-zarr-tasks.png",
+  "for": "ScrollPrize/villa#2136",
+  "shows": "zarr_tasks on main writes short pyramid levels; vc_create_segment_mask exits 1",
+  "kind": "terminal transcript of a real run, drawn from its saved log as text (lines verbatim; '#' lines, '...' lines, title bar and footer are labels)",
+  "data": {
+    "scan": "PHerc1451",
+    "volume": "20250521151225-8.640um-1.2m-116keV-masked.zarr, level 4",
+    "voxel_size": "8.640 um at level 0",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1db9cd9 (PR base)"
+  },
+  "width": 1188,
+  "height": 1114,
+  "bytes": 193626,
+  "sha256": "3eb0a29059e245b959284788d5cb8314a8832ce2d5bb489389b78ea95bc0ab6c",
+  "made": {
+    "date": "18 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

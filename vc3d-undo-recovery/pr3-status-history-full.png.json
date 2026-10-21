@@ -1,0 +1,26 @@
+{
+  "file": "pr3-status-history-full.png",
+  "for": "VC3D status history draft PR (branch vc3d-undo-recovery-3)",
+  "shows": "whole window with the History menu open",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "471214b23 (one commit before the branch tip 8f337d6c3)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 520770,
+  "sha256": "cad84512c9ad88ef6b5701434c8add23413480d3c6bbc796c479d14b708c05c0",
+  "made": {
+    "date": "19 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

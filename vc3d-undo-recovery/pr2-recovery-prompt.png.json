@@ -1,0 +1,26 @@
+{
+  "file": "pr2-recovery-prompt.png",
+  "for": "VC3D crash recovery draft PR (branch vc3d-undo-recovery-2)",
+  "shows": "the Recover Previous Session prompt on the next plain start",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1d72d716b (branch tip)"
+  },
+  "width": 842,
+  "height": 246,
+  "bytes": 31536,
+  "sha256": "88af0d691f1dab9f8568b4ad4ad02a1f5d99e8c95c1c9415d101b06fd8bd125d",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

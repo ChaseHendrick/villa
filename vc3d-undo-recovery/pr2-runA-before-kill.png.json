@@ -1,0 +1,26 @@
+{
+  "file": "pr2-runA-before-kill.png",
+  "for": "VC3D crash recovery draft PR (branch vc3d-undo-recovery-2)",
+  "shows": "the session right before kill -9: w035 selected, five points",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1d72d716b (branch tip)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 324166,
+  "sha256": "fc61ebcefc5d95621d459edf893945ad62c77634b1a64496c68dd9739c6a5529",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

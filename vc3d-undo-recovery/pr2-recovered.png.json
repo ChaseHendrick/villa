@@ -1,0 +1,26 @@
+{
+  "file": "pr2-recovered.png",
+  "for": "VC3D crash recovery draft PR (branch vc3d-undo-recovery-2)",
+  "shows": "after Recover: project, w035 and the five points back",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1d72d716b (branch tip)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 553133,
+  "sha256": "4112c33973f002bdd1cc6be8cc2e51d7a53aa52f561a955234adce7b1cddffc5",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

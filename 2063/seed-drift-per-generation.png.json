@@ -1,0 +1,27 @@
+{
+  "file": "seed-drift-per-generation.png",
+  "for": "ScrollPrize/villa#2063",
+  "shows": "distance from the seed per generation, base and PR, from the saved snapshots",
+  "kind": "chart of numbers read from the saved snapshots of the two runs",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "input": "published surface prediction 20250728140407-surface-20260413222639-surface-m7-L0-th0.2.zarr (read by the tool; its pixels are not shown)"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "before": "4eecd08",
+    "after": "c6acce081"
+  },
+  "width": 1800,
+  "height": 960,
+  "bytes": 88267,
+  "sha256": "2589b2eb8aa007e702e0e7eec33f2a8318be15ba8365410e6f6a7592bbcaeafb",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

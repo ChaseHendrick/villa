@@ -1,0 +1,26 @@
+{
+  "file": "pr1-before-main.png",
+  "for": "VC3D undo/redo draft PR (branch vc3d-undo-recovery-1)",
+  "shows": "main: two drags, Ctrl+Z, then Ctrl+Shift+Z undoes a second edit",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit (the caption band on top is the capture script's, not VC3D's)",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1db9cd944 (main, the branch's base)"
+  },
+  "width": 960,
+  "height": 564,
+  "bytes": 433397,
+  "sha256": "aa12b18a2c9391055fe44a9e7192e85bc3331bf9c11b48622753e1e04d29d201",
+  "made": {
+    "date": "21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

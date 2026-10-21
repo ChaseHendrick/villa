@@ -1,0 +1,25 @@
+{
+  "file": "after-pr-zarr-tasks.png",
+  "for": "ScrollPrize/villa#2136",
+  "shows": "the same run with the PR's utils.py: ceiling shapes, vc_create_segment_mask exits 0, layer equal to numpy",
+  "kind": "terminal transcript of a real run, drawn from its saved log as text (lines verbatim; '#' lines, '...' lines, title bar and footer are labels)",
+  "data": {
+    "scan": "PHerc1451",
+    "volume": "20250521151225-8.640um-1.2m-116keV-masked.zarr, level 4",
+    "voxel_size": "8.640 um at level 0",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "1db9cd9 with the PR's utils.py (head 6266619)"
+  },
+  "width": 1188,
+  "height": 1030,
+  "bytes": 176745,
+  "sha256": "2819be7641db3004172d16de99b831a8e5a30028d233bc1ca52b068da949c3a4",
+  "made": {
+    "date": "18 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}
