@@ -1,0 +1,23 @@
+{
+ "file": "timelimit-replay.gif",
+ "label": "Real data measurement (interface and chart, no CT pixels, no surface)",
+ "caption": "The two runs' tracer logs replayed side by side at 5x on the tracer's growth clock: the patched trace stops before generation 24 and saves its surface; villa main is stopped by SIGTERM at 60 s and leaves an empty folder. The main run had its normal grids cached, so it grew further. PHerc0841 surface prediction 20260413222639, 9.366 um scan 20250821151531. Data: Vesuvius Challenge, CC BY-NC 4.0",
+ "alt": "Two terminal panes replaying the logs; left ends with a saved surface, right with SIGTERM and nothing saved",
+ "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0",
+ "sources": [
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/result.json",
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/limit-trace.log",
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/kill-trace.log"
+ ],
+ "made_by": {
+  "command": "python3 scripts/media/timelimit_media.py <out>"
+ },
+ "encoder": {
+  "gif_fps": 10.0,
+  "lossy": 40,
+  "colors": 256,
+  "dither": "bayer:4, global palette",
+  "frame_stride": 1,
+  "gif_frames": 160
+ }
+}

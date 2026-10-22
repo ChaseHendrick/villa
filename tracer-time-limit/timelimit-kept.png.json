@@ -1,0 +1,15 @@
+{
+ "file": "timelimit-kept.png",
+ "label": "Real data measurement (interface and chart, no CT pixels, no surface)",
+ "caption": "Surface kept after 60 s: 0.74 cm2 with time_limit_s 60 (this PR), 0 cm2 from villa main killed at 60 s after growing 1.26 cm2 (areas from the tracer's log; meta.json: 0.71 cm2). PHerc0841 surface prediction 20260413222639, 9.366 um scan 20250821151531. Data: Vesuvius Challenge, CC BY-NC 4.0",
+ "alt": "Bar chart: this PR keeps 0.74 cm2; villa main killed at 60 s keeps nothing of the 1.26 cm2 it grew",
+ "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0",
+ "sources": [
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/result.json",
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/limit-trace.log",
+  "docs/evidence/villa-timelimit/run3-20261022T2002Z/kill-trace.log"
+ ],
+ "made_by": {
+  "command": "python3 scripts/media/timelimit_media.py <out>"
+ }
+}
