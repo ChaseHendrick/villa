@@ -1,0 +1,23 @@
+{
+  "file": "volcodec-ng-lossless.png",
+  "for": "volcodec_ng lossless zarr chunk codec PR (22 Oct)",
+  "shows": "size ratio (raw / stored) and one-thread encode and decode MB/s of five lossless options and raw storage on 12 held-out 256^3 CT crops, pooled, and the size ratio by scan resolution",
+  "kind": "chart of measured results, numbers only (no CT pixels)",
+  "data": {
+    "note": "12 crops of 256^3 voxels from 10 public scans at 0.55, 1.13, 2.4 and 8.64 um voxels (3 crops each), chosen by a fixed rule after the codec was frozen; every codec decoded every crop exactly",
+    "credit": "Data: Vesuvius Challenge open data, CC BY-NC 4.0"
+  },
+  "license": "chart: Apache-2.0 or GPL-3.0-or-later; data: CC BY-NC 4.0",
+  "code": {
+    "codecs": "volcodec_ng lossless (the header in this PR), volcomp 1.3.0 at q 0 (villa's libs/volcomp), Blosc 1 through numcodecs 0.17.1 (zstd 9 no shuffle, zstd 9 bitshuffle, lz4 5 shuffle)",
+    "speeds": "one thread, MB/s of raw voxels, best of 3; 16-core x86-64 cloud container (Modal), Debian gcc -O3 with run-time AVX2 dispatch"
+  },
+  "width": 1600,
+  "height": 1000,
+  "bytes": 256102,
+  "sha256": "d981c68be4cfe87e21dcb02079772a34ada328f693a830e8d1d0a111c2dc1195",
+  "made": {
+    "date": "22 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}
