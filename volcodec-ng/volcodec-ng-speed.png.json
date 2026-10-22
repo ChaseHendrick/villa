@@ -1,0 +1,23 @@
+{
+  "file": "volcodec-ng-speed.png",
+  "for": "volcodec_ng lossless zarr chunk codec PR (#2232), speed chart (22 Oct)",
+  "shows": "size ratio (raw / stored) and one-thread encode and decode MB/s of four lossless options (vc-delta3d 0.2.0 LPC, vc-delta3d delta, volcodec_ng, volcomp 1.3.0 q 0) on 12 held-out 256^3 CT crops, pooled, and the size ratio by scan resolution",
+  "kind": "chart of measured results, numbers only (no CT pixels)",
+  "data": {
+    "note": "12 crops of 256^3 voxels from 10 public scans at 0.55, 1.13, 2.4 and 8.64 um voxels (3 crops each), chosen by a fixed rule after the codec was frozen; every codec decoded every crop exactly",
+    "credit": "Data: Vesuvius Challenge open data, CC BY-NC 4.0"
+  },
+  "license": "chart: Apache-2.0 or GPL-3.0-or-later; data: CC BY-NC 4.0",
+  "code": {
+    "codecs": "vc-delta3d 0.2.0 (103b502a, Predictor::Lpc and the default Predictor::Delta, quant 1), volcodec_ng lossless (the header in this PR), volcomp 1.3.0 at q 0 (villa's libs/volcomp)",
+    "speeds": "one thread, MB/s of raw voxels (1e6 voxels per MB), best of 3, all four in one run (22 Oct 2026, 14:33 to 14:37 UTC) on a shared 4-core Xeon cloud container with AVX2, gcc 13.3.0 -O3"
+  },
+  "width": 1600,
+  "height": 1000,
+  "bytes": 226700,
+  "sha256": "ee7cc7112e29d901ed212559b113580e5cd2ff6e452df21cf0bb170f20690755",
+  "made": {
+    "date": "22 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}
