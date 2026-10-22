@@ -1,0 +1,28 @@
+{
+ "file": "fiberqa-duplicate.png",
+ "label": "Model output (not a reading)",
+ "label_also": "Real data render",
+ "kind": "still",
+ "caption": "fiber_qa's duplicate finding: 99 % of kb_20260828T044455666_000036.json (blue to yellow) lies within 8 voxels of kb_20260827T190132947_000015.json (red), so one CT fiber is annotated twice; neither file carries the possible_duplicate tag that vc_sync's publication skips. The lines are published fiber annotations: control points placed by annotators, the line between them traced by VC3D's fiber tracer. The lines are annotation and tracer output, not a reading. PHerc0139, segment kb_20260828T044455666_000036.json, kb_20260827T190132947_000015.json, 2.399 um voxels. Data: Vesuvius Challenge, CC BY-NC 4.0.",
+ "alt": "Two CT views of papyrus fibers with two annotation lines, one colored and one red, lying on top of each other.",
+ "data": {
+  "scan": "PHerc0139",
+  "segment": "kb_20260828T044455666_000036.json, kb_20260827T190132947_000015.json",
+  "volume": "20260102150214",
+  "voxel_um": 2.399,
+  "layers": [
+   "ct",
+   "fiber annotation"
+  ],
+  "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0"
+ },
+ "bytes": 722949,
+ "sha256": "b669a14e3a3ed7f51ccabf38ed4da409f3cb39c2664a3dc966e5d3faf809ba22",
+ "width": 1920,
+ "height": 980,
+ "sources": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/volumes/20260102150214-2.399um-0.2m-78keV-masked.zarr"
+ ],
+ "made_with": "volume-cartographer/scripts/fiber_qa.py (this PR) for the findings; the CT slab is cut from the public volume and the saved fiber line drawn over it with numpy and Pillow"
+}

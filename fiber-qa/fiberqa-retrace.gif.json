@@ -1,0 +1,30 @@
+{
+ "file": "fiberqa-retrace.gif",
+ "label": "Model output (not a reading)",
+ "label_also": "Real data render",
+ "kind": "gif",
+ "caption": "fiber_qa's retrace and fold_back findings on a published fiber annotation (lt_20260827T053757949_000005.json): the saved line runs about 900 voxels along a fiber, turns at line point 5562 and runs back over the same path. Left: the line over the CT, drawn in order; right: the same line as position along the fiber's direction against distance along the line, where going back shows as the curve turning around. In this file fiber_qa reports about 8,300 voxels of path traced twice. The lines are published fiber annotations: control points placed by annotators, the line between them traced by VC3D's fiber tracer. The line is annotation and tracer output, not a reading. PHerc0139, segment lt_20260827T053757949_000005.json, 2.399 um voxels. Data: Vesuvius Challenge, CC BY-NC 4.0.",
+ "alt": "An animation: a dot follows an annotation line over a CT slab out to the right and then back along the same path; beside it a chart's curve goes right and then turns back left.",
+ "data": {
+  "scan": "PHerc0139",
+  "segment": "lt_20260827T053757949_000005.json",
+  "volume": "20260102150214",
+  "voxel_um": 2.399,
+  "layers": [
+   "ct",
+   "fiber annotation"
+  ],
+  "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0"
+ },
+ "bytes": 365830,
+ "sha256": "5757eae398d6a71449c88a21dcd9308eb69814c677e031b3880d7b6dc4fc9f01",
+ "width": 1200,
+ "height": 636,
+ "frames": 60,
+ "seconds": 6.5,
+ "sources": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/volumes/20260102150214-2.399um-0.2m-78keV-masked.zarr"
+ ],
+ "made_with": "volume-cartographer/scripts/fiber_qa.py (this PR) for the findings; the CT slab is cut from the public volume and the saved fiber line drawn over it with numpy and Pillow"
+}

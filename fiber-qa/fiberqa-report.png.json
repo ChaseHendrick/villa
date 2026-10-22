@@ -1,0 +1,25 @@
+{
+ "file": "fiberqa-report.png",
+ "label": "Model output (not a reading)",
+ "kind": "still",
+ "caption": "fiber_qa's text report on the 620 published PHerc0139 fiber annotations (read 22 Oct 2026), with one warning of each kind shown. Findings are candidates for review, not verdicts, and not a reading. PHerc0139, segment 0139_fibers, 2.399 um voxels. Data: Vesuvius Challenge, CC BY-NC 4.0.",
+ "alt": "Terminal text: counts of findings per check, then three warning lines.",
+ "data": {
+  "scan": "PHerc0139",
+  "segment": "0139_fibers",
+  "volume": "20260102150214",
+  "voxel_um": 2.399,
+  "layers": [
+   "fiber annotation"
+  ],
+  "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0"
+ },
+ "bytes": 66628,
+ "sha256": "ce52652b299bdb533d5efb9fad07bce669570330ffa3bdaf7622f2d6b1e7dd41",
+ "width": 1920,
+ "height": 410,
+ "sources": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/"
+ ],
+ "made_with": "volume-cartographer/scripts/fiber_qa.py (this PR) for the findings; the CT slab is cut from the public volume and the saved fiber line drawn over it with numpy and Pillow"
+}

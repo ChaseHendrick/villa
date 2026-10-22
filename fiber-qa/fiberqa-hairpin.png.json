@@ -1,0 +1,28 @@
+{
+ "file": "fiberqa-hairpin.png",
+ "label": "Model output (not a reading)",
+ "label_also": "Real data render",
+ "kind": "still",
+ "caption": "fiber_qa's fold_back finding on a published fiber annotation (dj_20260930T103738708_000041.json, line point 2099, chord cosine -1.00): at the red box the saved line overshoots its control point and comes back. Left: 600 voxels of context; right: 120 voxels. The line is colored from blue to yellow along its order. The lines are published fiber annotations: control points placed by annotators, the line between them traced by VC3D's fiber tracer. The line is annotation and tracer output, not a reading. PHerc0139, segment dj_20260930T103738708_000041.json, 2.399 um voxels. Data: Vesuvius Challenge, CC BY-NC 4.0.",
+ "alt": "Two CT views of papyrus fibers with a colored annotation line that makes a sharp hairpin at a red box.",
+ "data": {
+  "scan": "PHerc0139",
+  "segment": "dj_20260930T103738708_000041.json",
+  "volume": "20260102150214",
+  "voxel_um": 2.399,
+  "layers": [
+   "ct",
+   "fiber annotation"
+  ],
+  "credit": "Data: Vesuvius Challenge, CC BY-NC 4.0"
+ },
+ "bytes": 811904,
+ "sha256": "d6c7e11e2b9b430b4e8e988574542e94e84f704008cbfec294940f10f733faa7",
+ "width": 1920,
+ "height": 980,
+ "sources": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/volumes/20260102150214-2.399um-0.2m-78keV-masked.zarr"
+ ],
+ "made_with": "volume-cartographer/scripts/fiber_qa.py (this PR) for the findings; the CT slab is cut from the public volume and the saved fiber line drawn over it with numpy and Pillow"
+}
