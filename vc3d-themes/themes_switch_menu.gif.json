@@ -1,0 +1,27 @@
+{
+  "file": "themes_switch_menu.gif",
+  "for": "VC3D themes (second VC3D PR, 22 Oct)",
+  "shows": "switching to Modern Dark and Modern Light from the menu",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "0fc230002 (vc3d-themes-1)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 2048188,
+  "sha256": "b767b56a3ed167bf6e02e6cc586969f7f074008e776000965c760ea0d3610e2e",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  },
+  "frames": 187
+}

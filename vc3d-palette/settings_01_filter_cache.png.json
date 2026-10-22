@@ -1,0 +1,26 @@
+{
+  "file": "settings_01_filter_cache.png",
+  "for": "VC3D command palette, Settings filter and keybinds sheet (second VC3D PR, 22 Oct)",
+  "shows": "File > Settings filtered to 'cache'",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "36bf9a21f (palette series tip: Settings filter, command palette, keybinds sheet, command.list)"
+  },
+  "width": 1242,
+  "height": 730,
+  "bytes": 57611,
+  "sha256": "69742ee5caa79c19e8067004d84553976aae3f25f7ecc8d8898989a0a14ba7f4",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

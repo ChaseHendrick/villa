@@ -1,0 +1,26 @@
+{
+  "file": "palette_01_open_crop.png",
+  "for": "VC3D command palette, Settings filter and keybinds sheet (second VC3D PR, 22 Oct)",
+  "shows": "the palette, empty query, close up",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "a05f32e68 (command palette branch vc3d-palette-v2-2 before its last two commits)"
+  },
+  "width": 800,
+  "height": 500,
+  "bytes": 169826,
+  "sha256": "a3abc7081c8976e8ff5bdc3d2cab8a0c949c9fcc972960999f2dc783af535ae3",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

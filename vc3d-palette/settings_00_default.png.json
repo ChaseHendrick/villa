@@ -1,0 +1,26 @@
+{
+  "file": "settings_00_default.png",
+  "for": "VC3D command palette, Settings filter and keybinds sheet (second VC3D PR, 22 Oct)",
+  "shows": "File > Settings with the empty filter field",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "36bf9a21f (palette series tip: Settings filter, command palette, keybinds sheet, command.list)"
+  },
+  "width": 1242,
+  "height": 730,
+  "bytes": 153766,
+  "sha256": "567e9f45aea472499f5eb8612db3dc82c92aa09ccd3849ce1475a0daccabc882",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

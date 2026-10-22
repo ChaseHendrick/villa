@@ -1,0 +1,26 @@
+{
+  "file": "w035-vflip-before-after.png",
+  "for": "keep a segment's subfolders on save (issue and PR, 22 Oct)",
+  "shows": "a copy of w035 with its published label zarrs inside, listed before and after flipU() and save(path, true), on main's QuadSurface.cpp and with the fix",
+  "kind": "saved logs of a real run, drawn as text",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "the published w035 ink labels and supervision mask, as folders only; no label pixels are shown",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "24417b3b6e (vc3d-keep-segment-subfolders-on-save), with the fix reversed and applied again in the same build"
+  },
+  "width": 936,
+  "height": 1515,
+  "bytes": 216885,
+  "sha256": "a845764f41e5b3b3c19014bcd4d378bfb24b7fdc5a007f7ee3ca164775421c9f",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

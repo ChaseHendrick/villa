@@ -1,0 +1,26 @@
+{
+  "file": "themes_10_range_slider_ring.png",
+  "for": "VC3D themes (second VC3D PR, 22 Oct)",
+  "shows": "the volume window slider handles under an orange-accent theme, before and after the fix",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "b0db6d3bc (vc3d-themes-2: themes plus the high-contrast example and the range slider fix); the before crop from an earlier build of that branch without the fix"
+  },
+  "width": 1260,
+  "height": 434,
+  "bytes": 184228,
+  "sha256": "ab542188f3dfa6104de6d98d16039342f584bddcc443450fa0c85c9fbd0e7390",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

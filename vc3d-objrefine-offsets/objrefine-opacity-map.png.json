@@ -1,0 +1,26 @@
+{
+  "file": "objrefine-opacity-map.png",
+  "for": "vc_objrefine offset report (second VC3D PR, 22 Oct)",
+  "shows": "opacity.tif, scale group 1",
+  "kind": "chart drawn from vc_objrefine's opacity.tif",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "f1988bd97 (vc3d-objrefine-offsets)"
+  },
+  "width": 1188,
+  "height": 1001,
+  "bytes": 161966,
+  "sha256": "5a12029cfb65289c5ffc44f76f3b0578b6c51fddfe01723a63f076c977c01f3a",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

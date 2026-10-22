@@ -1,0 +1,26 @@
+{
+  "file": "settings_before.png",
+  "for": "VC3D command palette, Settings filter and keybinds sheet (second VC3D PR, 22 Oct)",
+  "shows": "File > Settings before the filter",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "a0b36a985 (command palette plus command.list, without the Settings filter and the keybinds sheet)"
+  },
+  "width": 1242,
+  "height": 702,
+  "bytes": 151972,
+  "sha256": "513c80f90a67df79fe2922cbe4c75ff9a026baad7201ea7c972c55ad3584c42f",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

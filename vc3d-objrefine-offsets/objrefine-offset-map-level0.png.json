@@ -1,0 +1,26 @@
+{
+  "file": "objrefine-offset-map-level0.png",
+  "for": "vc_objrefine offset report (second VC3D PR, 22 Oct)",
+  "shows": "offset.tif at scale group 0",
+  "kind": "chart drawn from vc_objrefine's offset.tif, opacity.tif and the CT at the surface",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "f1988bd97 (vc3d-objrefine-offsets)"
+  },
+  "width": 1188,
+  "height": 1001,
+  "bytes": 1119723,
+  "sha256": "0d777ec6282bcbcf00afd69466de0df3d1f5368a96ee296427670d47a1368e5a",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

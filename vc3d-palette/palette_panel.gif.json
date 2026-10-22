@@ -1,0 +1,27 @@
+{
+  "file": "palette_panel.gif",
+  "for": "VC3D command palette, Settings filter and keybinds sheet (second VC3D PR, 22 Oct)",
+  "shows": "Ctrl+K again: the last command first; 'ink', Enter opens the Ink Detection panel",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "a05f32e68 (command palette branch vc3d-palette-v2-2 before its last two commits)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 934864,
+  "sha256": "8320840727ee230eb4a26a7de4db320e59e6a2bdbc791f37abf376f01c0cc843",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  },
+  "frames": 57
+}

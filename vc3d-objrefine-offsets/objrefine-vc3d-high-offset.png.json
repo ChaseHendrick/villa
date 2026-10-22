@@ -1,0 +1,26 @@
+{
+  "file": "objrefine-vc3d-high-offset.png",
+  "for": "vc_objrefine offset report (second VC3D PR, 22 Oct)",
+  "shows": "one vertex (grid row 251, column 173) opened in VC3D, with refine's scan drawn on the xy view afterwards",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit; the scan line was drawn on the image afterwards",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "f1988bd97 (vc3d-objrefine-offsets)"
+  },
+  "width": 1280,
+  "height": 590,
+  "bytes": 401131,
+  "sha256": "4bb345a827e4e04543c4c5b4613f97ba81a92505d8f6ff8b69823768bf4082bf",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

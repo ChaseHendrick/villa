@@ -1,0 +1,21 @@
+{
+  "file": "tests-before-after.png",
+  "for": "keep a segment's subfolders on save (issue and PR, 22 Oct)",
+  "shows": "test_quadsurface_save_paths on main's QuadSurface.cpp and with the fix, and the branch's full ctest",
+  "kind": "saved logs of a real run, drawn as text",
+  "data": {
+    "note": "no scan data; test output only"
+  },
+  "license": "none (test output)",
+  "code": {
+    "villa": "24417b3b6e (vc3d-keep-segment-subfolders-on-save), with the fix reversed and applied again in the same build"
+  },
+  "width": 1044,
+  "height": 798,
+  "bytes": 122242,
+  "sha256": "ae27df944c7eace85f9c4c86e2869b60898a4ea8ea1921416376e0b3c4d07536",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}

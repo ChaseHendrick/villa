@@ -1,0 +1,26 @@
+{
+  "file": "themes_09_high_contrast.png",
+  "for": "VC3D themes (second VC3D PR, 22 Oct)",
+  "shows": "the high-contrast example theme",
+  "kind": "VC3D screenshot captured under Xvfb from a build of the named commit",
+  "data": {
+    "scan": "PHerc0139",
+    "volume": "20250728140407",
+    "voxel_size": "9.362 um",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "segment": "w035"
+  },
+  "license": "CC BY-NC 4.0 (scan data)",
+  "code": {
+    "villa": "b0db6d3bc (vc3d-themes-2: themes plus the high-contrast example and the range slider fix)"
+  },
+  "width": 1280,
+  "height": 720,
+  "bytes": 796130,
+  "sha256": "a1b5b84f1419fb97553b9f5f1510fd398f528c92902f44551d0d30a45a1714b3",
+  "made": {
+    "date": "19 to 21 Oct 2026",
+    "machine": "Linux cloud container, Ubuntu 24.04"
+  }
+}
