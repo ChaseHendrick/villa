@@ -1,0 +1,13 @@
+{
+ "data": "Vesuvius Challenge open data, CC BY-NC 4.0",
+ "sources": [
+  "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/volumes/20250728140407-9.362um-1.2m-113keV-masked.zarr (CT volume, read 23 Oct 2026)",
+  "PHerc0139/segments/20260317000000-w035_2026031718/mesh/20260317000000-on-20250728140407-9.362um.tifxyz on the same bucket (published w035 mesh; an 80x60 crop of it is the segment being extended, and two of its points are the Shift+click targets)"
+ ],
+ "contents": {
+  "manual-extend.gif": "VC3D screen captures: the w035 crop ends, Extend Right by 20 vertices previews a straight continuation, two Shift+clicks in the XY slice bend it, Apply saves the grown segment",
+  "before-after.png": "first and last frames of the GIF side by side",
+  "03_click1.png": "the frame after the first Shift+click"
+ },
+ "made_by": "Chase Hendrick, with AI assistance (Claude Code)"
+}
