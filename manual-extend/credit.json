@@ -6,7 +6,7 @@
  ],
  "contents": {
   "manual-extend.gif": "VC3D screen captures: the w035 crop ends, Extend Right by 20 vertices shows a straight continuation, it is then re-walked along the sheet, Apply saves the grown segment",
-  "straight-vs-sheet.png": "the XY slice from the second and third GIF frames side by side: straight guess and the extension after it follows the sheet"
+  "strip-in-xy-slice.png": "the XY slice before the extension, with the new strip's intersection from the straight-guess capture (red) and the sheet-following capture (yellow) redrawn thick"
  },
  "made_by": "Chase Hendrick, with AI assistance (Claude Code)"
 }

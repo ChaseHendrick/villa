@@ -16,9 +16,9 @@
 
 ![Manual Add edge extension](https://raw.githubusercontent.com/ChaseHendrick/villa/pr-assets-manual-extend/manual-extend/manual-extend.gif)
 
-Straight guess (left) and the same extension after it follows the sheet (right), no clicks:
+Where the new strip cuts the XY slice, from the same two VC3D captures (the thin cyan intersection line redrawn thick so it is visible): the straight guess in red, the same extension after it follows the sheet in yellow, no clicks:
 
-![Straight guess vs follows the sheet](https://raw.githubusercontent.com/ChaseHendrick/villa/pr-assets-manual-extend/manual-extend/straight-vs-sheet.png)
+![Straight guess vs follows the sheet](https://raw.githubusercontent.com/ChaseHendrick/villa/pr-assets-manual-extend/manual-extend/strip-in-xy-slice.png)
 
 How close the new strip lands to the sheet: I cut 16 edge windows out of a published mesh (4 sides x 4 positions), extended each one, and measured each new vertex's distance to the real surface. A simulated user Shift+clicks where the strip is worst. Median over the 16 windows of the mean distance, in voxels. I tuned on w035 only, then froze the rule and ran w045 (PHerc0139, never used while developing) once.
 
