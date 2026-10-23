@@ -1,0 +1,18 @@
+{
+ "files": [
+  "volcodec-roundtrip.png",
+  "volcodec-roundtrip.gif"
+ ],
+ "data": "PHerc0500P2 volume 20250821110041-0.550um-0.1m-65keV-masked.zarr level 0, chunks 32-33/34-35/12-13 (256^3 at z 4096, y 4352, x 1536)",
+ "source_url": "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0500P2/volumes/20250821110041-0.550um-0.1m-65keV-masked.zarr/0",
+ "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+ "prize_eligible": false,
+ "codec": "volcodec_ng lossless, the coder in ScrollPrize/villa PR #2232; each 128^3 chunk encoded and decoded separately",
+ "volcodec_ng_bytes": 3895543,
+ "vc_delta3d_lpc_bytes": 4158004,
+ "raw_bytes": 16777216,
+ "src_sha256": "ab9c116008132501d3b7d456c88f405e4e2531921562b8b6c00b6b9a13fa90a4",
+ "dec_sha256": "ab9c116008132501d3b7d456c88f405e4e2531921562b8b6c00b6b9a13fa90a4",
+ "max_abs_difference": 0,
+ "model_output": false
+}
