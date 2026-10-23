@@ -74,7 +74,7 @@ Following the sheet was closer than straight on all 16 windows of both segments 
 
 At 40 vertices out the prediction gave 88.0% and 2.7%. There is no stop rule (none I tried helped on w035), so the error grows with distance. One caveat: those published meshes may have been traced with help from the same prediction.
 
-What that looks like: renders of the CT along each surface, on a w035 window (the tuning segment). The left third is the crop it started from, the rest is 80 vertices grown to the right with no clicks. Where the extension stays on the sheet, the texture continues across the dashed line like the published mesh's does; the straight continuation leaves the sheet within a few vertices:
+What that looks like: CT renders along each surface on a w035 window (the tuning segment). Left of the dashed line is the 40x40 crop it started from; right of it, 80 vertices grown to the right with no clicks. The straight continuation leaves the sheet and slices across many neighboring wraps (the curved bands). The vc_extend_edge runs keep showing papyrus surface much further out, but with smeared stretches where they drift, which fits their scores (80% of new vertices within 5 voxels with prediction normals, 51% with CT normals).
 
 ![Surface renders: published mesh, straight, CT normals, prediction normals](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/headless-extend-renders.png)
 
