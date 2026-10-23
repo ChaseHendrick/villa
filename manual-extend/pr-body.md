@@ -5,7 +5,7 @@
 **Before:** Manual Add only filled holes inside the grid. There was no manual way to add surface past an edge; the only options were the tracers.
 
 **After this PR:**
-- The Manual Add panel has an "Extend edge" row (vertex count plus Up, Down, Left, Right), and keys 1 / 2 / 3 / 4 do the same in Manual Add. Pressing the same key again applies the pending strip and starts the next one from the new edge, so you can keep walking out.
+- The Manual Add panel has an "Extend edge" row (vertex count plus Up, Down, Left, Right), and keys 1 / 2 / 3 / 4 (left, up, down, right, the Grow keys) do the same in Manual Add. Pressing the same key again applies the pending strip and starts the next one from the new edge, so you can keep walking out.
 - Shift+drag along an edge extends only that stretch of it.
 - The strip first shows as a straight continuation, then, in the background, each new row or column is re-walked along the sheet using the structure tensor normals from vc_reader's `sheet_normal`. It took about a minute for 80 lines of 20 vertices on the remote volume with nothing cached; the UI stays usable meanwhile. A checkbox turns this off.
 - Shift+clicks in slice views pull the strip onto the sheet without moving the existing surface; on a sheet-following strip a click only corrects its own neighborhood. Shift+right-click removes a click. Apply or Cancel finish it; the grid is padded when there is no room past the edge and the padding is removed on cancel.
@@ -13,13 +13,40 @@
 - The agent bridge and vc3d-mcp can do all of this headlessly.
 - A new command line tool, `vc_extend_edge`, does the same extension with no GUI, in rounds, on any sides: `vc_extend_edge -i IN -o OUT -n NORMALS_VOLUME --sides up,down,left,right --cells 10 --rounds 8`. The normals can come from the CT or from a surface prediction volume of the same scan.
 
+## How to use it
+
+**In VC3D**
+
+1. Open a segment and tick **Enable editing**.
+2. In the Manual Add panel, set how many vertices to add, then press **Up**, **Down**, **Left** or **Right**; this enters Manual Add on its own. Or, in Manual Add (Shift+E), press a Grow key in a viewer: **1** left, **2** up, **3** down, **4** right.
+3. The strip shows as a straight guess first, then bends onto the sheet within a few seconds to a minute (the status bar says when it is following the sheet).
+4. If part of it still misses, **Shift+click** the sheet in an XY, XZ or YZ view to pull that part over. **Shift+right-click** removes a click.
+5. Press the same key again to keep the strip and grow the next one from the new edge, or press **Apply & Exit** (or Shift+E). **Cancel** or Esc drops it. **Ctrl+Z** undoes an applied extension.
+6. To grow only part of an edge, **Shift+drag** along that stretch of the edge in the segment view.
+
+![Manual Add panel: the extend controls](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/howto-panel.png)
+
+**Without the GUI**
+
+```
+vc_extend_edge -i path/to/segment.tifxyz -o path/to/segment_extended.tifxyz \
+    -n https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/representations/predictions/surfaces/20250728140407-surface-20250701154204-surface-recto-090.zarr \
+    --sides up,down,left,right --cells 10 --rounds 8 --json
+```
+
+- `-n` is the volume the sheet normals come from: the scan's CT volume, or a surface prediction of the same scan where one exists (better in the test below). A local zarr or a URL both work.
+- `--sides`, `--cells` and `--rounds` set where to grow, how far per round and how many rounds. Fewer rounds stay closer to the sheet.
+- `--json` prints a report (vertices added per round and side, and steps that found no normal); `--report FILE` writes it to a file.
+- The input is not changed; the output is a new segment.
+- From a script or agent with VC3D running: `segmentation.manual_add.extend` on the agent bridge (`{"side": "right", "cells": 20, "applyPending": true}`), or `vc3d_manual_add_extend` in vc3d-mcp.
+
 **Proof:** Extend Right by 20 vertices on the public PHerc0139 volume and the published w035 mesh (VC3D screen captures). The cyan line in the XY slice is where the new strip cuts that slice:
 
-![Manual Add edge extension](https://raw.githubusercontent.com/ChaseHendrick/villa/pr-assets-manual-extend/manual-extend/manual-extend.gif)
+![Manual Add edge extension](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/manual-extend.gif)
 
 Where the new strip cuts the XY slice, from the same two VC3D captures (the thin cyan intersection line redrawn thick so it is visible): the straight guess in red, the same extension after it follows the sheet in yellow, no clicks:
 
-![Straight guess vs follows the sheet](https://raw.githubusercontent.com/ChaseHendrick/villa/pr-assets-manual-extend/manual-extend/strip-in-xy-slice.png)
+![Straight guess vs follows the sheet](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/strip-in-xy-slice.png)
 
 How close the new strip lands to the sheet: I cut 16 edge windows out of a published mesh (4 sides x 4 positions), extended each one, and measured each new vertex's distance to the real surface. A simulated user Shift+clicks where the strip is worst. Median over the 16 windows of the mean distance, in voxels. I tuned on w035 only, then froze the rule and ran w045 (PHerc0139, never used while developing) once.
 
@@ -43,7 +70,13 @@ Following the sheet was closer than straight on all 16 windows of both segments 
 | CT volume | 56.0% | 20.2% |
 | recto surface prediction | 75.1% | 10.1% |
 
+![Held-out: share of new vertices on the sheet by distance](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/headless-extend-heldout.png)
+
 At 40 vertices out the prediction gave 88.0% and 2.7%. There is no stop rule (none I tried helped on w035), so the error grows with distance. One caveat: those published meshes may have been traced with help from the same prediction.
+
+What that looks like: renders of the CT along each surface, on a w035 window (the tuning segment). The left third is the crop it started from, the rest is 80 vertices grown to the right with no clicks. Where the extension stays on the sheet, the texture continues across the dashed line like the published mesh's does; the straight continuation leaves the sheet within a few vertices:
+
+![Surface renders: published mesh, straight, CT normals, prediction normals](https://raw.githubusercontent.com/ChaseHendrick/villa/08acf20d794042c042bedd63a79e228dd24c01a3/manual-extend/headless-extend-renders.png)
 
 **Why / where this is useful:** For annotators fixing or finishing segments by hand, especially where the tracer runs off the sheet or stops. A community member asked on Discord for a sane way to extend meshes manually in VC3D; this is that. Following the sheet with vc_reader's sheet normals was Sean's suggestion on Discord.
 
