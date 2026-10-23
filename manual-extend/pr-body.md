@@ -11,6 +11,7 @@
 - Shift+clicks in slice views pull the strip onto the sheet without moving the existing surface; on a sheet-following strip a click only corrects its own neighborhood. Shift+right-click removes a click. Apply or Cancel finish it; the grid is padded when there is no room past the edge and the padding is removed on cancel.
 - Ctrl+Z after Apply undoes the extension, including when rows or columns were added at the top or left.
 - The agent bridge and vc3d-mcp can do all of this headlessly.
+- A new command line tool, `vc_extend_edge`, does the same extension with no GUI, in rounds, on any sides: `vc_extend_edge -i IN -o OUT -n NORMALS_VOLUME --sides up,down,left,right --cells 10 --rounds 8`. The normals can come from the CT or from a surface prediction volume of the same scan.
 
 **Proof:** Extend Right by 20 vertices on the public PHerc0139 volume and the published w035 mesh (VC3D screen captures). The cyan line in the XY slice is where the new strip cuts that slice:
 
@@ -35,6 +36,15 @@ How close the new strip lands to the sheet: I cut 16 edge windows out of a publi
 
 Following the sheet was closer than straight on all 16 windows of both segments at 0 clicks. The w045 click columns were run before the local click falloff existed (clicks then spread over the whole strip, which is why they made it slightly worse); the falloff was chosen afterwards on w035 only (reach 0, 2, 4, 8; 4 was best), so the w045 click numbers above are for the older click behavior. The test compares against the true mesh only; it does not run a tracer.
 
+**Headless extension, held out:** I cut 40x40 windows out of published PHerc0139 meshes and grew each side 8 rounds of 10 vertices (80 out) with no clicks, then counted the new vertices within 5 voxels of the real mesh and over 10 voxels. Settings were picked on w035 only, then frozen and run once on w052 and w038 (16 edge cases):
+
+| Normals from | within 5 voxels | over 10 voxels |
+| --- | --- | --- |
+| CT volume | 56.0% | 20.2% |
+| recto surface prediction | 75.1% | 10.1% |
+
+At 40 vertices out the prediction gave 88.0% and 2.7%. There is no stop rule (none I tried helped on w035), so the error grows with distance. One caveat: those published meshes may have been traced with help from the same prediction.
+
 **Why / where this is useful:** For annotators fixing or finishing segments by hand, especially where the tracer runs off the sheet or stops. A community member asked on Discord for a sane way to extend meshes manually in VC3D; this is that. Following the sheet with vc_reader's sheet normals was Sean's suggestion on Discord.
 
 - [ ] I personally verified that the example and proof above were produced by this PR on the stated data.
@@ -46,7 +56,7 @@ I was working on PHerc0139 segments and saw a question on Discord about extendin
 
 ## Details
 
-Seven commits:
+Nine commits:
 
 1. **Extend a segment's edge with Manual Add.** `ManualAddTool::beginExtension` and grid padding (`segmentation::resizeSurfaceGrid` pads the points and every channel, loading channels still only on disk, and shifts correction anchors when rows or columns are added at the top or left). Two save fixes found on the way:
    - Manual Add fills under a `mask.tif` were saved but hidden on the next load, because the mask still marked those cells invalid. Filled cells are now marked valid in the mask. The test `maskedFillSurvivesReload` failed before this fix.
@@ -58,10 +68,13 @@ Seven commits:
 6. **Agent bridge:** `applyPending` on `segmentation.manual_add.extend` for the same walk-on behavior.
 7. **Extensions follow the sheet.** `SheetNormalField` reads a 109^3 patch per query on a 3-voxel lattice (cached per volume) and calls `vcr::sheet_normal::cpu`; `ManualAddTool::walkSheetLine` projects each step into the plane across the normal at its midpoint and keeps the step length. It runs on a worker pool off the UI thread, and the result is dropped if the extension changed meanwhile. The bridge reports it as `followingSheet` and `manualAddFollowingSheet` in `state.get`. Note for review: `normal.hpp` is header-only and included from `vc_reader/src/cpp` through an include directory in VC3D's CMakeLists rather than copied; happy to move it if you prefer another layout.
 
+8. **`vc_extend_edge`.** `segmentation::autoExtendSurface` runs rounds of `beginExtension` plus the sheet walk on a `QuadSurface` with no GUI (padding the grid, marking masked cells valid), and `apps/VC3D/cli/vc_extend_edge.cpp` wraps it; it compiles the Manual Add sources into its own target, like `test_manual_add_extend` does. New test `autoExtendGrowsAlongTheSheet`.
+9. **`--report FILE`** writes the JSON report for scripts.
+
 Tried and left out: snapping the strip to the CT profile (won only 10 of 16 tuning windows, by 3 to 4%) and a tint for how far a vertex is from the sheet (no better than chance at finding the bad vertices).
 
 Not changed: the tracer path of Manual Add is untouched.
 
-Tested on `2896c5aea` (Linux, QuickBuild): `test_manual_add_extend` 18 of 18 pass; `agent_bridge/test/smoke_offscreen.py` passes with 122 methods; `tools/vc3d-mcp` pytest 167 passed, 2 skipped. The keys, drag and undo were checked in the running app under Xvfb; the screen captures came from this build.
+Tested on `b40a3a661` (Linux, QuickBuild): `test_manual_add_extend` 19 of 19 pass; `vc_extend_edge` on one w035 edge window matches the evaluation harness; `agent_bridge/test/smoke_offscreen.py` passes with 122 methods; `tools/vc3d-mcp` pytest 167 passed, 2 skipped. The keys, drag and undo were checked in the running app under Xvfb; the screen captures came from this build.
 
 Data credit: Vesuvius Challenge open data, CC BY-NC 4.0 (PHerc0139 volume `20250728140407-9.362um-1.2m-113keV-masked.zarr`, segments `20260317000000-w035_2026031718` and `20260126000000-w045_2026012619`).
