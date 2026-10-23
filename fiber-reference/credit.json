@@ -1,0 +1,13 @@
+{
+ "data": "Vesuvius Challenge open data, CC BY-NC 4.0",
+ "sources": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/ (all 620 files, read 23 Oct 2026)",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/ (116 files, traced 23 Oct 2026)"
+ ],
+ "contents": {
+  "fiber-reference-share.png": "chart of interp_mode shares and click gaps from the annotation files' metadata; one example fiber's control points and line, no CT",
+  "fiber-reference-clicks.gif": "the same example fiber: control points, then the line drawn between them; no CT",
+  "fiber-clicks-0332.png": "chart of clicks reached and line followed by three villa fiber tracers; numbers only, no CT"
+ },
+ "made_by": "Chase Hendrick, with AI assistance (Claude Code)"
+}
