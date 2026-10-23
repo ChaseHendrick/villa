@@ -2,11 +2,16 @@
  "data": "Vesuvius Challenge open data, CC BY-NC 4.0",
  "sources": [
   "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/volumes/20250728140407-9.362um-1.2m-113keV-masked.zarr (CT volume, read 23 Oct 2026)",
-  "PHerc0139/segments/20260317000000-w035_2026031718/mesh/20260317000000-on-20250728140407-9.362um.tifxyz on the same bucket (published w035 mesh; an 80x60 crop of it is the segment being extended)"
+  "PHerc0139/segments/20260317000000-w035_2026031718/mesh/20260317000000-on-20250728140407-9.362um.tifxyz on the same bucket (published w035 mesh; an 80x60 crop of it is the segment being extended)",
+  "https://vesuvius-challenge-open-data.s3.us-east-1.amazonaws.com/PHerc0139/representations/predictions/surfaces/20250728140407-surface-20250701154204-surface-recto-090.zarr (recto surface prediction of the same scan, the normals for the prediction runs, read 23 Oct 2026)",
+  "the published PHerc0139 w052 and w038 meshes on the same bucket (the held-out edges scored in headless-extend-heldout.png)"
  ],
  "contents": {
   "manual-extend.gif": "VC3D screen captures: the w035 crop ends, Extend Right by 20 vertices shows a straight continuation, it is then re-walked along the sheet, Apply saves the grown segment",
-  "strip-in-xy-slice.png": "the XY slice before the extension, with the new strip's intersection from the straight-guess capture (red) and the sheet-following capture (yellow) redrawn thick"
+  "strip-in-xy-slice.png": "the XY slice before the extension, with the new strip's intersection from the straight-guess capture (red) and the sheet-following capture (yellow) redrawn thick",
+  "howto-panel.png": "VC3D screen capture of the Manual Add panel, cropped and enlarged, with the extend controls boxed and labelled",
+  "headless-extend-renders.png": "vc_render_tifxyz middle-layer renders of the CT along four surfaces on a w035 window: the published mesh, a straight continuation, and vc_extend_edge with CT normals and with the recto surface prediction normals",
+  "headless-extend-heldout.png": "chart of the held-out scores (share of new vertices within 5 and over 10 voxels of the published mesh) by distance out, on 16 edges of w052 and w038"
  },
  "made_by": "Chase Hendrick, with AI assistance (Claude Code)"
 }
