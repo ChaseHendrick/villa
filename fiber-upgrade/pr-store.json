@@ -1,0 +1,12 @@
+{
+ "file": "pr-store.png",
+ "description": "PHerc0139 and PHerc0332 fibers and branch edges read back from object stores built with upgrade_vc3d_fibers.py and vc_object_ingest.",
+ "sha256": "be907288c84b3465474ddbb7c58d98e73b8b88b700b183496ab818e9801621a4",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3 with vc3d-fiber-upgrade dbc7aaa5"
+}

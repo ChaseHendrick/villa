@@ -1,0 +1,12 @@
+{
+ "file": "pr-before-after.png",
+ "description": "Fibers and branch links in the store: as published, after upgrade_vc3d_fibers.py, and relabeled as version 3 (reference).",
+ "sha256": "55b63b40cfa21cd53f5fd9aaefad269dc9d76983d2a1edd9d10df495744658e3",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3 with vc3d-fiber-upgrade dbc7aaa5"
+}
