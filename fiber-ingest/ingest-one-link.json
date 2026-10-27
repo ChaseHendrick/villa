@@ -1,0 +1,12 @@
+{
+ "file": "ingest-one-link.gif",
+ "description": "One branch link between two PHerc0332 fibers, rotating, with its JSON fields.",
+ "sha256": "bb08ad07402318f80b9bf1825936446c2c7483d5d83b672c2d6fed75d00a32b8",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3"
+}

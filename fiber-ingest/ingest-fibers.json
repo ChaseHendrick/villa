@@ -1,0 +1,12 @@
+{
+ "file": "ingest-fibers.png",
+ "description": "All published PHerc0139 and PHerc0332 fiber annotations drawn from their line_points, colored by file version and link type.",
+ "sha256": "649d9508980ae34112fa3f2b331375a97824186ae6606c8047d7ca1192694d70",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3"
+}

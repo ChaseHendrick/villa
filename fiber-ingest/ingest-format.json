@@ -1,0 +1,12 @@
+{
+ "file": "ingest-format.png",
+ "description": "One version 4 branch entry as VC3D saved it, next to the FiberInput.cpp rule that reads it.",
+ "sha256": "e835a55e9ec5a83e60e2603f1a8e9550802db51f2856017dc496d409293d3820",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3"
+}

@@ -1,0 +1,12 @@
+{
+ "file": "ingest-spin-0332.gif",
+ "description": "PHerc0332 published fibers rotating about the scroll axis, colored by link type.",
+ "sha256": "e0da0dad6fec9a1741ed222215bb794a0d72f48a9eec8ca31bdbae082412c08c",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3"
+}

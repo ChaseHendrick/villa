@@ -1,0 +1,12 @@
+{
+ "file": "ingest-outcome.png",
+ "description": "vc_object_ingest results on villa main 39a8cf3: as published vs the same files relabeled as version 3.",
+ "sha256": "da99fe8d6f4755227a4d3005c0be5bee70a480fc811d70c6a2e156014d341052",
+ "data": [
+  "https://dl.ash2txt.org/other/annotators/0139_fibers/",
+  "https://dl.ash2txt.org/other/annotators/0332_fibers/"
+ ],
+ "credit": "Fiber annotations: Vesuvius Challenge open data, CC BY-NC 4.0",
+ "contains": "annotation geometry only; no CT, no ink, no model output",
+ "made": "2026-10-27, matplotlib, villa main 39a8cf3"
+}
