@@ -1,0 +1,1 @@
+VC3D: Ctrl+C copies the coordinates under the mouse, Ctrl+Shift+C the focus point
