@@ -198,6 +198,12 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 
 - [spiral-winding-audit](https://github.com/TAUIL-Abd-Elilah/spiral-winding-audit) by TAUIL Abd Elilah. Finds and repairs windings that the snap step of the PHerc. 343 recipe stacks onto one surface. Along radial rays in the raw CT, 15–17% of consecutive snapped windings on PHerc. 0175A and 0800 fits sit within 2 voxels of each other and render the same papyrus (1.7% on the awarded PHerc. 343 pair), because the surface prediction has 81–91% of the CT's bright layers there. `repair --ct` keeps nodes that sit on CT layers the prediction misses and moves stacked nodes to the bright CT layer between their neighbours (PHerc. 0175A band: 15.5% → 6.3% stacked; CT at moved nodes 95 → 123). Also a per-node audit (same sheet, skipped wrap, off any sheet) and a mask of the single-sheet pieces that are read once. CPU only; tifxyz and OME-Zarr in, tifxyz out; 26 tests on a synthetic scroll.
 
+- [Ringleader](https://github.com/ChaseHendrick/Scrolls/blob/main/docs/tools/ringleader.md) by Chase Hendrick. Labels every sheet of the m7 surface prediction in a z-slice, or a stack of slices, with its winding number in one solve (phase unwrapping around the umbilicus as a minimum-cost flow). `ladders.py` turns the labels it is surest of into the spiral fit's `relative_windings.json`, so the fit gets relative-winding constraints with no hand annotation. In a test with the rules fixed in advance, on a PHerc. 139 band no setting was tuned on (z 1,960 to 2,300, 86 slices, scored against the published hand windings), the fit kept the right winding on 0.227 of sheet pixels by itself, 0.373 with ladders from 10 slices and 0.409 after a second round, and 0.107 with a deliberately wrong plus-one control. Shown on one scroll so far: on a second scroll the gain was smaller (+0.053). CPU only, Apache 2.0.
+
+- [Umbilici](https://huggingface.co/spaces/SharpMeow/umbilici) by Chase Hendrick. Every public scroll center line (umbilicus) I could find, for the 22 prize scans and 13 other public scans, drawn in 3D over CT streamed from the open data, each maker credited and colored, with end points outside the scroll hidden and each scan's best line marked. The lines are in the dataset [SharpMeow/vesuvius-center-lines](https://huggingface.co/datasets/SharpMeow/vesuvius-center-lines), ready for the spiral fit.
+
+- [AFV Fibers](https://huggingface.co/spaces/SharpMeow/afv-fibers) by Chase Hendrick. 23.2 million papyrus fiber curves (3.8 million of them 1 mm or longer) from Qual's AFV V2 fiber model and spline generator, run over six whole scans Qual had not run it on (PHerc. 0009B, 139, 332, 814, 841 and 1667), as `.afv` files VC3D opens, each read back with villa's `import_afv.py`. On a test cube of Qual's published V2 set the same recipe matches Qual's fibers to 98 % within one voxel. The Space draws the fibers in any box over the CT and lists every public fiber set.
+
 ### 📦 Materials
 
 #### 🌟 Highlighted
@@ -211,6 +217,7 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 - [Scroll 1, and 3 Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/p2_submission/) by Sean Johnson
 - [Scroll 4 Surface Predictions](https://dl.ash2txt.org/community-uploads/bruniss/Fiber-and-Surface-Models/Predictions/s4/) by Sean Johnson
 - [Scroll Surface Prediction Repository and Writeup](https://github.com/bruniss/VC-Surface-Models) by Sean Johnson 
+- [Lasagna Fields](https://huggingface.co/spaces/SharpMeow/lasagna-fields) by Chase Hendrick. Whole-scan lasagna fields for 24 scrolls in villa's own layout: villa's fields from the open data, plus fields made with villa's lasagna `predict3d` or, as previews, with [Lasagnetta](https://huggingface.co/SharpMeow/lasagnetta), a faster copy of villa's net. The Space also makes villa's own field for any box of any public scan on ZeroGPU.
 
 #### 📜 Segments
 -[Large Autosegmentation of Scroll5](https://dl.ash2txt.org/community-uploads/bruniss/p2_submission/s5_initial_trace/) by Hendrik Schilling and Sean Johnson -- Unsupervised, many switches -- check readme.md
@@ -226,6 +233,8 @@ For state-of-the-art updates join our [Discord server](https://discord.com/invit
 #### 🏷️ Volumetric Labels
 
 - [Instance segmentation labels](https://github.com/JamesDarby345/Vesuvius_3D_datasets) by James Darby
+
+- [Snapped Labels](https://huggingface.co/datasets/SharpMeow/vesuvius-snapped-labels) by Chase Hendrick. All 108 published surface labels of PHerc. 139, 814, 841 and 172 (32.9 million vertices), with each vertex moved along its normal onto the papyrus recto face, as tifxyz on the same grid as the source, with a per-vertex confidence and abstain code. On fresh PHerc. 139 sites scored against an independent 1.129 µm scan, 91.2 % of snapped vertices sit within one voxel of the face, against 23.7 % for the published labels (PHerc. 814: 71.0 % against 24.2 %). The code is [#2368](https://github.com/ScrollPrize/villa/pull/2368) (`snap_labels`).
 
 ### 📝 Reports
 
