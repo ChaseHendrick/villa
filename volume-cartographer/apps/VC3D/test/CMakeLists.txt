@@ -737,3 +737,62 @@ add_test(NAME grow_patch_seed_dialog COMMAND test_grow_patch_seed_dialog)
 set_tests_properties(grow_patch_seed_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 vc_register_test_target(test_grow_patch_seed_dialog)
 vc_register_ctest(grow_patch_seed_dialog test_grow_patch_seed_dialog)
+
+# Ink labels: the GUI-free raster, store and image files, and the controller,
+# overlay and panel against a stub ViewerManager (as core/test's ink detection
+# overlay test does).
+# The test reads TIFF tags directly to check the trainer file layout.
+find_package(TIFF REQUIRED)
+add_executable(test_ink_labels
+    test_ink_labels.cpp
+    ../ink_labels/InkLabelRaster.cpp
+    ../ink_labels/InkLabelRegions.cpp
+    ../ink_labels/InkLabelStore.cpp
+    ../ink_labels/InkLabelTiff.cpp
+    ../ink_labels/InkLabelAssist.cpp
+    ../ink_labels/InkLabelImport.cpp
+    ../ink_labels/InkLabelController.cpp
+    ../ink_labels/InkLabelController.hpp
+    ../overlays/InkLabelOverlayController.cpp
+    ../overlays/InkLabelOverlayController.hpp
+    ../overlays/InkDetectionOverlayController.cpp
+    ../overlays/InkDetectionOverlayController.hpp
+    ../viewer_controls/panels/InkLabelPanel.cpp
+    ../viewer_controls/panels/InkLabelPanel.hpp
+    ../overlays/ViewerOverlayControllerBase.cpp
+    ../overlays/ViewerOverlayControllerBase.hpp
+    ../Colormaps.cpp
+    ../OpenDataResourceSelection.cpp
+    ../SurfaceCatalog.cpp
+    ../SurfaceCatalog.hpp
+    ../CState.cpp
+    ../CState.hpp
+    ../OpenedVolumes.cpp
+    ../PointCollectionSync.cpp
+    ../PointCollectionSync.hpp
+    ../SessionDrafts.cpp
+    ../SessionDrafts.hpp
+    ../Keybinds.cpp
+    ../SpiralBrushCursorWidget.cpp
+    ../SpiralBrushCursorWidget.hpp
+    ../ViewerManager.hpp
+    ../elements/COutlinedTextItem.cpp
+    ../elements/CollapsibleSettingsGroup.cpp
+    ../elements/CollapsibleSettingsGroup.hpp
+    ../elements/LabeledControlRow.cpp
+    ../elements/LabeledControlRow.hpp
+    ../volume_viewers/CVolumeViewerView.cpp
+    ../volume_viewers/CVolumeViewerView.hpp
+    ${PROJECT_SOURCE_DIR}/core/src/VCCollection.cpp
+    ${PROJECT_SOURCE_DIR}/core/include/vc/ui/VCCollection.hpp
+    ${PROJECT_SOURCE_DIR}/core/test/test_viewer_manager_stub.cpp)
+set_target_properties(test_ink_labels PROPERTIES AUTOMOC ON AUTOUIC OFF AUTORCC OFF)
+target_include_directories(test_ink_labels PRIVATE ${PROJECT_SOURCE_DIR}/apps/VC3D)
+target_compile_definitions(test_ink_labels PRIVATE VC_TESTING)
+target_link_libraries(test_ink_labels PRIVATE
+    vc_core vc_object_store::vc_objects vc_object_store::vc_object_geometry opencv_core opencv_imgproc opencv_imgcodecs
+    TIFF::TIFF Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test)
+add_test(NAME ink_labels COMMAND test_ink_labels)
+vc_register_test_target(test_ink_labels)
+vc_register_ctest(ink_labels test_ink_labels)
+set_tests_properties(ink_labels PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)

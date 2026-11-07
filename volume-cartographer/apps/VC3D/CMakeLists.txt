@@ -210,12 +210,28 @@ set(srcs
     overlays/ScreenSpacePointIndex.hpp
     overlays/InkDetectionOverlayController.cpp
     overlays/InkDetectionOverlayController.hpp
+    overlays/InkLabelOverlayController.cpp
+    overlays/InkLabelOverlayController.hpp
     overlays/VolumeOverlayController.cpp
     overlays/VolumeOverlayController.hpp
     overlays/ViewerOverlayControllerBase.cpp
     overlays/ViewerOverlayControllerBase.hpp
     overlays/SpiralOverlayController.cpp
     overlays/SpiralOverlayController.hpp
+    ink_labels/InkLabelAssist.cpp
+    ink_labels/InkLabelAssist.hpp
+    ink_labels/InkLabelController.cpp
+    ink_labels/InkLabelController.hpp
+    ink_labels/InkLabelImport.cpp
+    ink_labels/InkLabelImport.hpp
+    ink_labels/InkLabelRaster.cpp
+    ink_labels/InkLabelRaster.hpp
+    ink_labels/InkLabelRegions.cpp
+    ink_labels/InkLabelRegions.hpp
+    ink_labels/InkLabelStore.cpp
+    ink_labels/InkLabelStore.hpp
+    ink_labels/InkLabelTiff.cpp
+    ink_labels/InkLabelTiff.hpp
     SurfacePanelController.cpp
     SurfacePanelController.hpp
     MenuActionController.cpp
@@ -286,6 +302,8 @@ set(srcs
     viewer_controls/ViewerControlsPanel.hpp
     viewer_controls/panels/ViewerCompositePanel.cpp
     viewer_controls/panels/ViewerCompositePanel.hpp
+    viewer_controls/panels/InkLabelPanel.cpp
+    viewer_controls/panels/InkLabelPanel.hpp
     viewer_controls/panels/ViewerInkDetectionPanel.cpp
     viewer_controls/panels/ViewerInkDetectionPanel.hpp
     viewer_controls/panels/ViewerNavigationPanel.cpp

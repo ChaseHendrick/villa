@@ -29,6 +29,7 @@
 #include "OpenDataNormalGrids.hpp"
 #include "viewer_controls/panels/ViewerCompositePanel.hpp"
 #include "viewer_controls/panels/ViewerInkDetectionPanel.hpp"
+#include "ink_labels/InkLabelController.hpp"
 #include <QLoggingCategory>
 #include <QAction>
 #include <QVBoxLayout>
@@ -798,6 +799,10 @@ CWindow::CWindow(size_t cacheSizeGB) :
     setCentralWidget(workspaceContainer);
     connect(_workspaceTabs, &QTabWidget::currentChanged, this, [this]() {
         scheduleWindowStateSave();
+        // The ink label keys are window shortcuts, enabled only in the segment workspace.
+        if (_inkLabelController) {
+            _inkLabelController->updateShortcutStates();
+        }
         updateActiveWorkspaceViewerControls();
         updateLineAnnotationLengthLabel();
         QTimer::singleShot(0, this, &CWindow::updateProjectNameLabel);
@@ -1052,6 +1057,47 @@ CWindow::CWindow(size_t cacheSizeGB) :
 
     _inkDetectionOverlay = std::make_unique<InkDetectionOverlayController>(_state, this);
     _viewerManager->setInkDetectionOverlay(_inkDetectionOverlay.get());
+
+    // Shown in the status bar while ink label mode is on: class, tool, radius.
+    QPointer<QLabel> inkLabelModeLine = new QLabel(this);
+    inkLabelModeLine->setObjectName(QStringLiteral("inkLabelModeLine"));
+    inkLabelModeLine->setContentsMargins(8, 0, 8, 0);
+    inkLabelModeLine->hide();
+    statusBar()->addPermanentWidget(inkLabelModeLine);
+    _inkLabelController = std::make_unique<InkLabelController>(InkLabelController::Deps{
+        .state = _state,
+        .viewers = _viewerManager.get(),
+        .shortcutHost = this,
+        .status = [this](const QString& text, int ms) {
+            // The status bar is gone once teardown starts; a closing session may still report.
+            if (!_destroyingWindow) {
+                showStatusBarMessage(text, ms);
+            }
+        },
+        .otherSurfaceToolActive = [this] { return _segmentationModule && _segmentationModule->editingEnabled(); },
+        .segmentationEditing = [this] { return _segmentationModule && _segmentationModule->editingEnabled(); },
+        .labelName = [this](const std::string& uuid) -> std::string {
+            const auto* row = _surfaceCatalog ? _surfaceCatalog->row(uuid) : nullptr;
+            if (!row) {
+                return {};
+            }
+            const auto meta = nlohmann::json::parse(row->record.meta, nullptr, false);
+            if (meta.is_object()) {
+                const auto longId = meta.find("segment_long_id");
+                if (longId != meta.end() && longId->is_string() && !longId->get<std::string>().empty()) {
+                    return longId->get<std::string>();
+                }
+            }
+            return row->record.name;
+        },
+        .workspaceActive = [this] { return _workspaceTabs && _workspaceTabs->currentWidget() == _segmentWorkspaceWindow; },
+        .modeLine = [this, inkLabelModeLine](const QString& text) {
+            if (_destroyingWindow || !inkLabelModeLine) {
+                return;
+            }
+            inkLabelModeLine->setText(text);
+            inkLabelModeLine->setVisible(!text.isEmpty());
+        }}, this);
 
     _planeSlicingOverlay = std::make_unique<PlaneSlicingOverlayController>(_state, this);
     _planeSlicingOverlay->bindToViewerManager(_viewerManager.get());
@@ -1639,6 +1685,9 @@ void CWindow::populateDockToggleMenu(QMenu* menu) const
     addDock(menu, ui.dockWidgetViewerControls);
     addDock(menu, ui.dockWidgetOverlay);
     addDock(menu, _inkDetectionDock);
+    if (_inkLabelController) {
+        menu->addAction(_inkLabelController->labelModeAction());
+    }
     addDock(menu, _transformsDock);
     addDock(menu, ui.dockWidgetComposite);
     addDock(menu, _lasagnaDock);
@@ -3582,7 +3631,7 @@ void CWindow::CreateWidgets(void)
     _inkDetectionDock = new QDockWidget(tr("Ink Detection"), this);
     _inkDetectionDock->setObjectName(QStringLiteral("dockWidgetInkDetection"));
     attachScrollAreaToDock(_inkDetectionDock,
-                           new ViewerInkDetectionPanel(_viewerManager.get(), _inkDetectionDock),
+                           new ViewerInkDetectionPanel(_viewerManager.get(), _inkLabelController.get(), _inkDetectionDock),
                            QStringLiteral("dockWidgetInkDetectionContent"));
 
     _transformsDock = new QDockWidget(tr("Transforms"), this);
@@ -3967,6 +4016,10 @@ void CWindow::saveWindowState()
 
 void CWindow::closeEvent(QCloseEvent* event)
 {
+    if (_inkLabelController && !_inkLabelController->readyToClose([this] { close(); })) {
+        event->ignore();
+        return;
+    }
     if (_spiralWorkspace && !_spiralCloseGuardBypass
         && _spiralWorkspace->hasPendingBrushWork()) {
         event->ignore();
