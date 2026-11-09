@@ -1,0 +1,440 @@
+{
+  "assembly_freeze_sha256": "003905973c7b8fd9ba6286e3fc35c554f58320d5466d61fb0387c55f9f3cf5d1",
+  "assets": [
+    {
+      "file": "stills/01-labels-attached.png",
+      "height": 1036,
+      "original_capture": "007-public-companion-after-mode-ink_labels.png",
+      "original_sha256": "c357a91ec74b1c2767fff91c55f5d05c4d0b82c7f773277fbd8007fa36722474",
+      "sha256": "c357a91ec74b1c2767fff91c55f5d05c4d0b82c7f773277fbd8007fa36722474",
+      "transform": "byte-exact copy",
+      "width": 822
+    },
+    {
+      "file": "stills/02-labels-floating.png",
+      "height": 1800,
+      "original_capture": "091-public-companion-selection-floating-mode-ink-brush-opacity100-ink_labels.png",
+      "original_sha256": "d2d7fd9f80bc7206b7d490d62062ff4f143a36b953b42e63165e6d6f67c6aa0a",
+      "sha256": "d2d7fd9f80bc7206b7d490d62062ff4f143a36b953b42e63165e6d6f67c6aa0a",
+      "transform": "byte-exact copy",
+      "width": 1280
+    },
+    {
+      "file": "stills/03-assist.png",
+      "height": 1800,
+      "original_capture": "003-public-companion-assist-floating-ink_labels.png",
+      "original_sha256": "af524084b4947f8c21dc5db703f03aa56e02bc863044587218b71eeb4458eef4",
+      "sha256": "af524084b4947f8c21dc5db703f03aa56e02bc863044587218b71eeb4458eef4",
+      "transform": "byte-exact copy",
+      "width": 1280
+    },
+    {
+      "file": "stills/04-versions.png",
+      "height": 1800,
+      "original_capture": "004-public-companion-files-floating-ink_labels.png",
+      "original_sha256": "41d791ae936ee419ff2b532af9a15eca919d87d63d27df23084921afca19ba9a",
+      "sha256": "41d791ae936ee419ff2b532af9a15eca919d87d63d27df23084921afca19ba9a",
+      "transform": "byte-exact copy",
+      "width": 1280
+    },
+    {
+      "file": "stills/05-labels-visible.png",
+      "height": 2980,
+      "original_capture": "027-public-companion-display-show-before-segmentation.png",
+      "original_sha256": "259d43c634ff296519cb22cb47c157e498a6bbcbc507ec39b2d38caa3379a4cc",
+      "sha256": "259d43c634ff296519cb22cb47c157e498a6bbcbc507ec39b2d38caa3379a4cc",
+      "transform": "byte-exact copy",
+      "width": 3834
+    },
+    {
+      "file": "stills/06-labels-hidden.png",
+      "height": 2980,
+      "original_capture": "030-public-companion-display-show-toggled-segmentation.png",
+      "original_sha256": "7601f0bcc94e04db0dc11a0b64225854275c20e589908e51bde3310494343611",
+      "sha256": "7601f0bcc94e04db0dc11a0b64225854275c20e589908e51bde3310494343611",
+      "transform": "byte-exact copy",
+      "width": 3834
+    },
+    {
+      "file": "stills/07-opacity37-panel.png",
+      "height": 1036,
+      "original_capture": "065-public-companion-opacity-set37-ink_labels.png",
+      "original_sha256": "dcf2853b9d30cbc1e7b8333a3ec19ab5a34a6204f276b7b01d1fa1d684cc5245",
+      "sha256": "dcf2853b9d30cbc1e7b8333a3ec19ab5a34a6204f276b7b01d1fa1d684cc5245",
+      "transform": "byte-exact copy",
+      "width": 822
+    },
+    {
+      "file": "stills/08-opacity100-panel.png",
+      "height": 1036,
+      "original_capture": "068-public-companion-opacity-set100-ink_labels.png",
+      "original_sha256": "e769415765146d14c33db93318bfbb288aed29af10ce1970e9c303d3ec18dfa9",
+      "sha256": "e769415765146d14c33db93318bfbb288aed29af10ce1970e9c303d3ec18dfa9",
+      "transform": "byte-exact copy",
+      "width": 822
+    },
+    {
+      "file": "stills/09-opacity37-viewer.png",
+      "height": 2980,
+      "original_capture": "066-public-companion-opacity-set37-segmentation.png",
+      "original_sha256": "e06f03a3322eea4909d352b6dd6a6a1ed5e8c5813ecf5e47631443bfc2d6a114",
+      "sha256": "e06f03a3322eea4909d352b6dd6a6a1ed5e8c5813ecf5e47631443bfc2d6a114",
+      "transform": "byte-exact copy",
+      "width": 3834
+    },
+    {
+      "file": "stills/10-opacity100-viewer.png",
+      "height": 2980,
+      "original_capture": "069-public-companion-opacity-set100-segmentation.png",
+      "original_sha256": "05739daec419808888a21737ddd7b7875d761c7c290e500390b9c69f3ebe986a",
+      "sha256": "05739daec419808888a21737ddd7b7875d761c7c290e500390b9c69f3ebe986a",
+      "transform": "byte-exact copy",
+      "width": 3834
+    },
+    {
+      "file": "stills/11-reopened.png",
+      "height": 3116,
+      "original_capture": "104-public-companion-reopened-window.png",
+      "original_sha256": "1d83e362ef934dd0bf942b91fb3ace80848e39ad7595dd426cd1697a93a875b0",
+      "sha256": "1d83e362ef934dd0bf942b91fb3ace80848e39ad7595dd426cd1697a93a875b0",
+      "transform": "byte-exact copy",
+      "width": 7680
+    },
+    {
+      "file": "stills/12-cold-restart.png",
+      "height": 3116,
+      "original_capture": "106-public-cold-production-cold-restarted-window.png",
+      "original_sha256": "0ceaa40c22c507e958156682a06ea851dcc97a9c25eee83cd927b6a118725df3",
+      "sha256": "0ceaa40c22c507e958156682a06ea851dcc97a9c25eee83cd927b6a118725df3",
+      "transform": "byte-exact copy",
+      "width": 7680
+    },
+    {
+      "bytes": 598402,
+      "file": "gifs/selected-controls.gif",
+      "frames": [
+        {
+          "caption": "Label mode on",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "007-public-companion-after-mode-ink_labels.png",
+          "original_sha256": "c357a91ec74b1c2767fff91c55f5d05c4d0b82c7f773277fbd8007fa36722474",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Background selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "009-public-companion-after-background-ink_labels.png",
+          "original_sha256": "18d9340377ac10ac78fc26c5480d9308162a954e5975877a1753d3685b89ca4b",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Validation selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "011-public-companion-after-validation-ink_labels.png",
+          "original_sha256": "d84f16509f0bedc01285641c04a9042ca674ca12ce4fe3ca48dceda8d816d188",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Ink selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "013-public-companion-after-ink-ink_labels.png",
+          "original_sha256": "60b2effd0ae83a47418e3bb399bd59b970ec43360c09f42fe94b3c5e11cc6732",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Eraser on",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "015-public-companion-after-erase-ink_labels.png",
+          "original_sha256": "703bdd7f06c712d89ed179700af22b0737d31c38f2c66a1bf68e94c441cebda6",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Polygon selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "019-public-companion-after-polygon-ink_labels.png",
+          "original_sha256": "7cd62c96983cd22c82a3838800b0c4ecbc3d5519f5cf2c43216b1ba1a1d9caee",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Fill selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "021-public-companion-after-fill-ink_labels.png",
+          "original_sha256": "814768eb9a50e1d1aea7b6ebfff239b9bc47a38f5edf454ac72b32733851701d",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Brush selected",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "023-public-companion-after-brush-ink_labels.png",
+          "original_sha256": "c357a91ec74b1c2767fff91c55f5d05c4d0b82c7f773277fbd8007fa36722474",
+          "raw_size": [
+            822,
+            1036
+          ]
+        }
+      ],
+      "height": 1182,
+      "loop": true,
+      "sha256": "375ad3da1c140430289fcf47df4174f59dc4ebd8cd6355c8b6f6f5a3a5ac3324",
+      "timing": "Each actual still held2300ms; illustrative selected states, not continuous event timing.",
+      "transform": "Aspect-preserving downscale if needed; complete source frame; external caption bands; shared256-color GIF palette (128 gray,128 derived from actual color pixels); no crop, redaction, interpolation or retouch.",
+      "width": 1024
+    },
+    {
+      "bytes": 679006,
+      "file": "gifs/labels-visibility.gif",
+      "frames": [
+        {
+          "caption": "Labels visible",
+          "display_size": [
+            1336,
+            1038
+          ],
+          "duration_ms": 2300,
+          "original_capture": "027-public-companion-display-show-before-segmentation.png",
+          "original_sha256": "259d43c634ff296519cb22cb47c157e498a6bbcbc507ec39b2d38caa3379a4cc",
+          "raw_size": [
+            3834,
+            2980
+          ]
+        },
+        {
+          "caption": "Labels hidden",
+          "display_size": [
+            1336,
+            1038
+          ],
+          "duration_ms": 2300,
+          "original_capture": "030-public-companion-display-show-toggled-segmentation.png",
+          "original_sha256": "7601f0bcc94e04db0dc11a0b64225854275c20e589908e51bde3310494343611",
+          "raw_size": [
+            3834,
+            2980
+          ]
+        },
+        {
+          "caption": "Labels visible again",
+          "display_size": [
+            1336,
+            1038
+          ],
+          "duration_ms": 2300,
+          "original_capture": "033-public-companion-display-show-returned-segmentation.png",
+          "original_sha256": "259d43c634ff296519cb22cb47c157e498a6bbcbc507ec39b2d38caa3379a4cc",
+          "raw_size": [
+            3834,
+            2980
+          ]
+        }
+      ],
+      "height": 1200,
+      "loop": true,
+      "sha256": "53b7d080e62f866d1c01771fc178d93b94b0b827bc473a84ce94d1ad0b601a3c",
+      "timing": "Each actual still held2300ms; illustrative selected states, not continuous event timing.",
+      "transform": "Aspect-preserving downscale if needed; complete source frame; external caption bands; shared256-color GIF palette (128 gray,128 derived from actual color pixels); no crop, redaction, interpolation or retouch.",
+      "width": 1360
+    },
+    {
+      "bytes": 151501,
+      "file": "gifs/opacity-readout.gif",
+      "frames": [
+        {
+          "caption": "Numeric opacity: 37%",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "065-public-companion-opacity-set37-ink_labels.png",
+          "original_sha256": "dcf2853b9d30cbc1e7b8333a3ec19ab5a34a6204f276b7b01d1fa1d684cc5245",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "Numeric opacity: 100%",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "068-public-companion-opacity-set100-ink_labels.png",
+          "original_sha256": "e769415765146d14c33db93318bfbb288aed29af10ce1970e9c303d3ec18dfa9",
+          "raw_size": [
+            822,
+            1036
+          ]
+        }
+      ],
+      "height": 1182,
+      "loop": true,
+      "sha256": "54b8baa599b78fefa270bf301a61175f2b16c12c8f8cbc7e70b40b16b96658d3",
+      "timing": "Each actual still held2300ms; illustrative selected states, not continuous event timing.",
+      "transform": "Aspect-preserving downscale if needed; complete source frame; external caption bands; shared256-color GIF palette (128 gray,128 derived from actual color pixels); no crop, redaction, interpolation or retouch.",
+      "width": 1024
+    },
+    {
+      "bytes": 1008823,
+      "file": "gifs/opacity-viewer.gif",
+      "frames": [
+        {
+          "caption": "Opacity 37%",
+          "display_size": [
+            1336,
+            1038
+          ],
+          "duration_ms": 2300,
+          "original_capture": "066-public-companion-opacity-set37-segmentation.png",
+          "original_sha256": "e06f03a3322eea4909d352b6dd6a6a1ed5e8c5813ecf5e47631443bfc2d6a114",
+          "raw_size": [
+            3834,
+            2980
+          ]
+        },
+        {
+          "caption": "Opacity 100%",
+          "display_size": [
+            1336,
+            1038
+          ],
+          "duration_ms": 2300,
+          "original_capture": "069-public-companion-opacity-set100-segmentation.png",
+          "original_sha256": "05739daec419808888a21737ddd7b7875d761c7c290e500390b9c69f3ebe986a",
+          "raw_size": [
+            3834,
+            2980
+          ]
+        }
+      ],
+      "height": 1200,
+      "loop": true,
+      "sha256": "8065330c75dad5937ce0c098f7e6c80755f21bbd12c97b03e7942b9f00fba60c",
+      "timing": "Each actual still held2300ms; illustrative selected states, not continuous event timing.",
+      "transform": "Aspect-preserving downscale if needed; complete source frame; external caption bands; shared256-color GIF palette (128 gray,128 derived from actual color pixels); no crop, redaction, interpolation or retouch.",
+      "width": 1360
+    },
+    {
+      "bytes": 228156,
+      "file": "gifs/undo-redo.gif",
+      "frames": [
+        {
+          "caption": "Before Undo: 1 edit",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "098-public-companion-before-undo-ink_labels.png",
+          "original_sha256": "8478bce792939d1106d4553636033c7c22c1327670a9ecece9ffdb29390fdeca",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "After Undo: 0 edits, 1 redo",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "099-public-companion-after-undo-ink_labels.png",
+          "original_sha256": "859bf4261fdaa107c3b5004a0859a036fbf6be73c5f3778f58d86b02ce300854",
+          "raw_size": [
+            822,
+            1036
+          ]
+        },
+        {
+          "caption": "After Redo: 1 edit",
+          "display_size": [
+            822,
+            1036
+          ],
+          "duration_ms": 2300,
+          "original_capture": "101-public-companion-after-redo-ink_labels.png",
+          "original_sha256": "8478bce792939d1106d4553636033c7c22c1327670a9ecece9ffdb29390fdeca",
+          "raw_size": [
+            822,
+            1036
+          ]
+        }
+      ],
+      "height": 1182,
+      "loop": true,
+      "sha256": "45e9c5d474272b73ca62e5587374d8b8128d8ae2bb9b0337a681812c3d354af4",
+      "timing": "Each actual still held2300ms; illustrative selected states, not continuous event timing.",
+      "transform": "Aspect-preserving downscale if needed; complete source frame; external caption bands; shared256-color GIF palette (128 gray,128 derived from actual color pixels); no crop, redaction, interpolation or retouch.",
+      "width": 1024
+    }
+  ],
+  "data_credit": "Vesuvius Challenge; PHerc0139, segment20260317000000-w035_2026031718,9.362um; CC BY-NC4.0. Colored marks are disposable practice annotations.",
+  "documentation": {
+    "README.md": "7f8cf117a602c984ffe9f55b751898d3429d56a62de391bcbbba617524de8783",
+    "tutorial.md": "70bd5b9c745683d2fef9c7467634d459fa6e543e720e37f03ce85da31355e22b"
+  },
+  "documentation_revision": "Concise human tutorial; validation/provenance moved to README appendix. Frozen assembled a1 preserved.",
+  "full_bridge_result": "83 PASS",
+  "native_freeze_sha256": "fe177d941403612eab9dacbee251346442a62982b3cb7c56df545349a4685ca8",
+  "original_assembled_manifest_sha256": "df4d0a57b7132a928e739feda535399fa36a256d908c458d907a0965bae8d220",
+  "physical_human_input": false,
+  "publication_approved": false,
+  "raw_capture_content_modified": false,
+  "source": "Actual Cocoa VC3D captures; public PHerc0139 w035 practice",
+  "source_commit": "43a64fd21fefa0a431f67dde5fcb0c45fd3881f7",
+  "visual_review_sha256": "23e580d2fa50948c358edb9563950949efc67693820efe4ebd7d33595ac57638"
+}
