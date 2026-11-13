@@ -20,7 +20,7 @@ VC3D (villa branch `vc3d-ink-preview` at `17ef0d3`) under Xvfb at 1920 x 1080, a
 | `vc3d-preview-ag896-forward.png` | 1920x1144 | 1,649,676 | VC3D window, live ink preview on ag896, forward layers, Magma at 70 %, Ink Detection dock open |
 | `vc3d-preview-ag896-reversed.png` | 1920x1144 | 1,639,334 | Same view with Reverse layers checked (the control view) |
 | `vc3d-preview-ag896-hero.png` | 1920x1144 | 2,962,131 | VC3D with the segment view widened, preview across the view, dock open |
-| `vc3d-preview-pan.gif` | 960x1114 | 2,154,824 | 3 frames (10 s, 10 s, 14 s): before a pan, after the pan while the new strip is computed, the new strip in place |
-| `vc3d-preview-reverse-toggle.gif` | 960x1114 | 2,325,889 | 4 frames (10 s, 10 s, 10 s, 14 s): forward, Reverse layers checked and sampling, reversed, forward again from the cache |
+| `vc3d-preview-pan.gif` | 960x1114 | 2,160,620 | 3 frames (10 s, 10 s, 14 s): before a pan, after the pan while the new strip is computed, the new strip in place |
+| `vc3d-preview-reverse-toggle.gif` | 960x1114 | 2,331,685 | 4 frames (10 s, 10 s, 10 s, 14 s): forward, Reverse layers checked and sampling, reversed, forward again from the cache |
 | `vc3d-preview-parity-chart.png` | 1650x810 | 124,659 | Gate 1 chart: VC3D upload against vc_render_tifxyz, 12 views, with the 1 px control (from gate1.json) |
 | `inkpreview-server-parity-chart.png` | 1650x810 | 136,722 | Gate 2 chart: preview server against infer --roi, 12 views, with both controls (from gate2.json) |
