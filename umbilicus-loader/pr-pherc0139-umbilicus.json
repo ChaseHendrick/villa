@@ -1,0 +1,32 @@
+{
+  "file": "pr-pherc0139-umbilicus.png",
+  "label": "Real data render",
+  "kind": "annotation geometry, no CT pixels",
+  "caption": "PHerc0139 umbilicus fetched with fetch_umbilicus(\"PHerc0139\"): the organizers' line from the open-data bucket (annotator David Josey), 391 control points in level-0 voxels of volume 20260102150214. Vesuvius Challenge open data, CC BY-NC 4.0",
+  "alt": "Two panels plotting the x and y of each umbilicus control point against slice z for PHerc0139",
+  "data": {
+    "scan": "PHerc0139",
+    "voxel_size": "2.399 um",
+    "volume": "20260102150214-2.399um-0.2m-78keV-masked.zarr",
+    "labels": "none",
+    "credit": "Vesuvius Challenge open data, CC BY-NC 4.0",
+    "source_file": "lines/PHerc0139/PHerc0139_20260102150214_bucket_umbilicus.json",
+    "dataset": "https://huggingface.co/datasets/SharpMeow/vesuvius-center-lines/tree/5160338283e3ede64684e7f68734ad5eb2de7415"
+  },
+  "prize_eligible": false,
+  "model_output": false,
+  "license": "CC BY-NC 4.0",
+  "command": "python -I make_figure.py <volpkg>/umbilicus.json pr-pherc0139-umbilicus.png  (umbilicus.json written by fetch_umbilicus('PHerc0139', into=<volpkg>))",
+  "tool": {
+    "scripts": [
+      "make_figure.py"
+    ],
+    "base_commit": "69efc2ae3aef2ad1d4b5296a91f7fd467210d9d9",
+    "repo": "ScrollPrize/villa (local branch centerlines-loader)"
+  },
+  "width_px": 1600,
+  "height_px": 900,
+  "bytes": 172691,
+  "sha256": "cc5c6a7f975ef18c8891f71769567325e482838dddd4f1da9f22920f21956a95",
+  "made": "2026-10-28"
+}
