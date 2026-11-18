@@ -244,6 +244,8 @@ input; its `paths` overrides are retired) and for geometry keys.
   the two catalog properties when both are present, and then only needed as a
   cross-check (a mismatch is an error). Without them it is required and is
   read off the CT data by a person in VC3D, or from an already-fitted spiral.
+  `python -m m7_winding_constraints.outward_sense` reads it from the surface
+  prediction instead, or abstains (`m7_winding_constraints/README.md`).
   The fit setting `spiral_outward_sense` (`FIT_SPIRAL_CONFIG_OVERRIDES`) may
   give it instead, and must agree with the manifest where both do.
 
